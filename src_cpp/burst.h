@@ -24,11 +24,31 @@ public:
     // direction_threshold: ratio (e.g., 0.7) of buy/total or sell/total to classify direction
     BurstDetector(double silence_threshold, int min_volume, double direction_threshold);
     
-    // Returns true if a burst just finished (and met min_volume)
+    // Returns true if a burst just finished (and passed filters)
     // If true, 'result' will contain that finished burst data
     bool process(const LobsterMessage& msg, double current_mid, Burst& result);
 
+    // Finalize any active burst (call at end of each trading day).
+    // Returns true if an active burst was emitted into 'result'.
+    bool flush(Burst& result);
+
+    // Reset all state for a new trading day.
+    void reset();
+
 private:
+    // ── CHANGE THESE TO CHANGE BEHAVIOR ──────────────────────
+    
+    // Should the current burst end? Currently: silence-based.
+    bool should_terminate(double time_gap);
+    
+    // Set direction & peak_price on current_burst_. Currently: buy/sell ratio.
+    void classify_direction();
+    
+    // Is the finished burst worth keeping? Currently: minimum volume.
+    bool passes_filter();
+    
+    // ─────────────────────────────────────────────────────────
+    
     double silence_threshold_;
     int min_volume_;
     double direction_threshold_;

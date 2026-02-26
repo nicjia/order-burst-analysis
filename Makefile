@@ -1,20 +1,29 @@
-# Compiler settings
-CXX = g++
+# ─────────────────────────────────────────────────────────────
+# Makefile — Burst Detection Pipeline
+# ─────────────────────────────────────────────────────────────
+# Portable C++17.  No <filesystem> — uses POSIX dirent.h instead,
+# so there's no need for -lstdc++fs on any platform.
+#
+# Hoffman2 (UCLA HPC):
+#   module load gcc/11.3.0   # (or any gcc >= 7 with C++17)
+#   make clean && make
+# ─────────────────────────────────────────────────────────────
+
+CXX      = g++
 CXXFLAGS = -std=c++17 -O3 -Wall
 
-# Source files
-SRC_DIR = src_cpp
-SRCS = $(SRC_DIR)/main.cpp $(SRC_DIR)/parser.cpp $(SRC_DIR)/burst.cpp
+SRC_DIR  = src_cpp
+SRCS     = $(SRC_DIR)/main.cpp \
+           $(SRC_DIR)/parser.cpp \
+           $(SRC_DIR)/burst.cpp \
+           $(SRC_DIR)/orderbook.cpp
 
-# Output binary name
-TARGET = data_processor
+TARGET   = data_processor
 
-# The Build Rule
 all: $(TARGET)
 
 $(TARGET): $(SRCS)
 	$(CXX) $(CXXFLAGS) $(SRCS) -o $(TARGET)
 
-# Clean Rule (to remove the binary)
 clean:
 	rm -f $(TARGET)
