@@ -17,8 +17,10 @@
 #include <sstream>
 #include <iomanip>
 #include <vector>
+#include <deque>
 #include <string>
 #include <algorithm>
+#include <cmath>
 #include <dirent.h>
 
 #include "parser.h"
@@ -27,6 +29,13 @@
 #include "orderbook.h"
 
 // ── Helpers ─────────────────────────────────────────────────
+
+// Regular Trading Hours in seconds-past-midnight.
+// 9:30 AM = 34200, 4:00 PM = 57600.
+// Conservative safe zone trims the open/close chaos:
+//   9:40 AM = 34800,  3:50 PM = 57000
+constexpr double RTH_DEFAULT_START = 34200.0;   // 09:30
+constexpr double RTH_DEFAULT_END   = 57600.0;   // 16:00
 
 // Collect all *message*.csv files in a directory, sorted by name (= by date).
 std::vector<std::string> find_message_files(const std::string& folder) {
@@ -89,7 +98,53 @@ double lookup_mid(const std::vector<std::pair<double, double>>& snaps, double ta
     return it->second;
 }
 
+// Scan mid-price snapshots to find the most extreme price within [start_time, start_time + tau_max].
+// This is the true forward-looking PeakImpact defined by the proposal.
+double find_peak_price(const std::vector<std::pair<double, double>>& snaps,
+                       double start_time, double start_price, double tau_max, int direction) {
+    if (snaps.empty()) return start_price;
+
+    // Binary search to the first snapshot at or after start_time
+    auto it = std::lower_bound(snaps.begin(), snaps.end(), start_time,
+        [](const std::pair<double, double>& p, double t) { return p.first < t; });
+
+    double end_time = start_time + tau_max;
+    double max_p = start_price;
+    double min_p = start_price;
+
+    while (it != snaps.end() && it->first <= end_time) {
+        max_p = std::max(max_p, it->second);
+        min_p = std::min(min_p, it->second);
+        ++it;
+    }
+
+    if (direction == 1)  return max_p;   // Buy burst → highest price reached
+    if (direction == -1) return min_p;   // Sell burst → lowest price reached
+
+    // Mixed: whichever moved further from start
+    return (std::abs(max_p - start_price) >= std::abs(min_p - start_price)) ? max_p : min_p;
+}
+
 // ── Per-day burst record with forward-return data ───────────
+
+// ── Market state snapshot — captured at burst START time ─────
+//    All of these are observable before the burst's impact
+//    propagates, so they carry NO look-ahead bias.
+
+struct MarketState {
+    double spread;            // bid-ask spread in dollars at burst start
+    int    bid_vol_best;      // volume at best bid
+    int    ask_vol_best;      // volume at best ask
+    int    bid_depth_5;       // total bid volume across top 5 levels
+    int    ask_depth_5;       // total ask volume across top 5 levels
+    double book_imbalance;    // (bid_depth_5 − ask_depth_5) / (bid + ask)
+    double volatility_60s;    // realised volatility of mid-returns, 60 s window
+    double momentum_5s;       // mid-price change over prior 5 seconds
+    double momentum_30s;      //   ... 30 seconds
+    double momentum_60s;      //   ... 60 seconds
+    int    trade_count_5m;    // number of trades in prior 5 minutes
+    int    trade_volume_5m;   // total shares traded in prior 5 minutes
+};
 
 struct BurstRecord {
     std::string ticker;
@@ -100,6 +155,7 @@ struct BurstRecord {
     double mid_3m;      // mid at end_time + 180 s
     double mid_5m;      // mid at end_time + 300 s
     double mid_10m;     // mid at end_time + 600 s
+    MarketState mkt;    // book state at burst start
 };
 
 // ── Usage ───────────────────────────────────────────────────
@@ -112,7 +168,10 @@ void print_usage(const char* prog) {
               << "  -s <silence>    silence threshold in seconds (default: 1.0)\n"
               << "  -v <min_vol>    minimum burst volume in shares  (default: 100)\n"
               << "  -d <direction>  direction ratio threshold        (default: 0.9)\n"
-              << "  -k <kappa>      kappa filter parameter            (default: 0.5)\n";
+              << "  -k <kappa>      kappa filter parameter            (default: 0.5)\n"
+              << "  -t <tau_max>    peak-impact horizon in seconds    (default: 10.0)\n"
+              << "  -b <rth_start>  RTH start in sec-past-midnight    (default: 34200 = 09:30)\n"
+              << "  -e <rth_end>    RTH end   in sec-past-midnight    (default: 57600 = 16:00)\n";
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -129,7 +188,11 @@ int main(int argc, char* argv[]) {
     double silence_threshold   = 1.0;
     int    min_volume          = 100;
     double direction_threshold = 0.9;
+    double volume_ratio_threshold = 0.5;  // minority_vol / majority_vol cap for directional classification
     double kappa               = 0.5;
+    double tau_max             = 10.0;  // microstructure horizon for peak impact
+    double rth_start            = RTH_DEFAULT_START;
+    double rth_end              = RTH_DEFAULT_END;
 
     for (int i = 3; i < argc; i += 2) {
         if (i + 1 >= argc) break;
@@ -137,7 +200,11 @@ int main(int argc, char* argv[]) {
         if      (opt == "-s") silence_threshold   = std::stod(argv[i+1]);
         else if (opt == "-v") min_volume          = std::stoi(argv[i+1]);
         else if (opt == "-d") direction_threshold = std::stod(argv[i+1]);
+        else if (opt == "-r") volume_ratio_threshold = std::stod(argv[i+1]);
         else if (opt == "-k") kappa               = std::stod(argv[i+1]);
+        else if (opt == "-t") tau_max             = std::stod(argv[i+1]);
+        else if (opt == "-b") rth_start           = std::stod(argv[i+1]);
+        else if (opt == "-e") rth_end             = std::stod(argv[i+1]);
     }
 
     // ── Discover day files ──────────────────────────────────
@@ -154,7 +221,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Settings: silence=" << silence_threshold
               << "  min_vol=" << min_volume
               << "  dir_thresh=" << direction_threshold
-              << "  kappa=" << kappa << "\n\n";
+              << "  vol_ratio_thresh=" << volume_ratio_threshold
+              << "  kappa=" << kappa
+              << "  tau_max=" << tau_max
+              << "  RTH=[" << rth_start << "," << rth_end << "]\n\n";
 
     std::vector<BurstRecord> all_records;
 
@@ -165,27 +235,111 @@ int main(int argc, char* argv[]) {
 
         // Fresh book & detector per day (pre-open rebuilds the book)
         OrderBook     book;
-        BurstDetector detector(silence_threshold, min_volume, direction_threshold);
+        BurstDetector detector(silence_threshold, min_volume, direction_threshold, volume_ratio_threshold);
         LobsterParser parser(msg_file);
 
         // Mid-price snapshots: only recorded when mid actually changes.
         // Used after the day loop for forward-return lookups.
         std::vector<std::pair<double, double>> mid_snapshots;
-        mid_snapshots.reserve(500000);  // typical: a few hundred-K BBO changes/day
+        mid_snapshots.reserve(500000);
+
+        // ── Rolling statistics accumulators ──────────────────
+        // (a) Mid-return ring buffer for 60-second realized volatility
+        //     Each entry = (time, mid_price).  We compute returns on the fly.
+        std::deque<std::pair<double, double>> mid_ring;  // (time, mid)
+        const double VOL_WINDOW = 60.0;
+
+        // (b) Trade ring buffer for 5-minute trade intensity
+        struct TradeStamp { double time; int size; };
+        std::deque<TradeStamp> trade_ring;
+        const double TRADE_WINDOW = 300.0;
+
+        // (c) Burst start-time ring buffer for recent-burst features
+        struct BurstStamp { double time; int direction; int volume; };
+        std::deque<BurstStamp> burst_ring;
 
         LobsterMessage msg;
         Burst finished;
-        std::vector<Burst> day_bursts;
+        std::vector<std::pair<Burst, MarketState>> day_bursts;  // burst + state at initiation
         double current_mid = 0.0;
         long   msg_count   = 0;
+        bool   flushed_at_rth_end = false;
+
+        // Helper lambda: compute realized volatility from mid_ring
+        auto calc_volatility = [&](double now) -> double {
+            // Prune old entries
+            while (!mid_ring.empty() && mid_ring.front().first < now - VOL_WINDOW)
+                mid_ring.pop_front();
+            if (mid_ring.size() < 2) return 0.0;
+            double sum_sq = 0.0;
+            int n = 0;
+            for (size_t k = 1; k < mid_ring.size(); ++k) {
+                double prev = mid_ring[k-1].second;
+                if (prev == 0.0) continue;
+                double ret = (mid_ring[k].second - prev) / prev;
+                sum_sq += ret * ret;
+                ++n;
+            }
+            return (n > 0) ? std::sqrt(sum_sq / n) : 0.0;
+        };
+
+        // Helper lambda: momentum = (current_mid − mid_at(now − delta)) / mid_at(now − delta)
+        auto calc_momentum = [&](double now, double delta) -> double {
+            double target = now - delta;
+            // Find the latest mid_ring entry at or before target
+            double ref_mid = 0.0;
+            for (auto it = mid_ring.rbegin(); it != mid_ring.rend(); ++it) {
+                if (it->first <= target) { ref_mid = it->second; break; }
+            }
+            if (ref_mid == 0.0 || current_mid == 0.0) return 0.0;
+            return (current_mid - ref_mid) / ref_mid;
+        };
+
+        // Helper lambda: trade intensity in prior TRADE_WINDOW
+        auto calc_trade_stats = [&](double now) -> std::pair<int, int> {
+            while (!trade_ring.empty() && trade_ring.front().time < now - TRADE_WINDOW)
+                trade_ring.pop_front();
+            int cnt = 0, vol = 0;
+            for (auto& t : trade_ring) { ++cnt; vol += t.size; }
+            return {cnt, vol};
+        };
+
+        // Helper lambda: snapshot full MarketState
+        auto snapshot_market_state = [&](double now) -> MarketState {
+            MarketState s{};
+            s.spread        = book.get_spread();
+            s.bid_vol_best  = book.get_bid_volume_at_best();
+            s.ask_vol_best  = book.get_ask_volume_at_best();
+            s.bid_depth_5   = book.get_bid_depth(5);
+            s.ask_depth_5   = book.get_ask_depth(5);
+
+            double total_depth = (double)(s.bid_depth_5 + s.ask_depth_5);
+            s.book_imbalance = (total_depth > 0)
+                ? (double)(s.bid_depth_5 - s.ask_depth_5) / total_depth
+                : 0.0;
+
+            s.volatility_60s  = calc_volatility(now);
+            s.momentum_5s     = calc_momentum(now, 5.0);
+            s.momentum_30s    = calc_momentum(now, 30.0);
+            s.momentum_60s    = calc_momentum(now, 60.0);
+
+            auto [tc, tv]     = calc_trade_stats(now);
+            s.trade_count_5m  = tc;
+            s.trade_volume_5m = tv;
+            return s;
+        };
 
         while (parser.next_message(msg)) {
             ++msg_count;
 
-            // 1. Update the reconstructed order book
+            // 1. ALWAYS update the order book — pre-open messages
+            //    rebuild the full visible book before RTH opens.
             book.process_message(msg);
 
-            // 2. Track mid-price (only when book has both sides)
+            // 2. Track mid-price (only when book has both sides).
+            //    We record snapshots even outside RTH so that
+            //    forward-return lookups (e.g. Mid_10m for a 3:55 PM
+            //    burst) have prices right up to the close.
             if (book.is_valid()) {
                 double new_mid = book.get_mid_price();
                 if (new_mid != current_mid) {
@@ -194,23 +348,57 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // 3. Feed into burst detector (needs valid mid to work)
+            // 3. Burst detection is restricted to Regular Trading Hours.
+            //    Pre-market, opening auction, and post-close are excluded.
+            if (msg.time < rth_start) continue;     // pre-market: skip
+
+            // ── Update rolling accumulators (RTH only) ──────
+            if (current_mid > 0.0) {
+                // Only push when mid changes (same condition as mid_snapshots)
+                if (mid_ring.empty() || mid_ring.back().second != current_mid) {
+                    mid_ring.push_back({msg.time, current_mid});
+                }
+            }
+            // Track every trade for intensity
+            bool is_trade = (msg.type == 4 || msg.type == 5);
+            if (is_trade) {
+                trade_ring.push_back({msg.time, msg.size});
+            }
+
+            if (msg.time > rth_end) {
+                // Past RTH — flush once, then just keep reading for mid snapshots
+                if (!flushed_at_rth_end) {
+                    if (detector.flush(finished)) {
+                        MarketState ms = snapshot_market_state(finished.start_time);
+                        day_bursts.push_back({finished, ms});
+                    }
+                    flushed_at_rth_end = true;
+                }
+                continue;
+            }
+
+            // Inside RTH — feed to burst detector
             if (current_mid > 0.0) {
                 if (detector.process(msg, current_mid, finished)) {
-                    day_bursts.push_back(finished);
+                    // Snapshot market state AT THE TIME THE BURST STARTED
+                    MarketState ms = snapshot_market_state(finished.start_time);
+                    day_bursts.push_back({finished, ms});
                 }
             }
         }
 
-        // Flush any burst still active at market close
-        if (detector.flush(finished)) {
-            day_bursts.push_back(finished);
+        // Flush any burst still active at file end
+        if (!flushed_at_rth_end && detector.flush(finished)) {
+            MarketState ms = snapshot_market_state(finished.start_time);
+            day_bursts.push_back({finished, ms});
         }
 
         double close_mid = current_mid;
 
-        // 4. Compute forward-return mid-prices for each burst
-        for (auto& b : day_bursts) {
+        // 4. Compute peak impact (tau_max) and forward-return mid-prices
+        for (auto& [b, ms] : day_bursts) {
+            b.peak_price = find_peak_price(mid_snapshots, b.start_time, b.start_price, tau_max, b.direction);
+
             BurstRecord rec;
             rec.ticker    = ticker;
             rec.date      = date;
@@ -220,6 +408,7 @@ int main(int argc, char* argv[]) {
             rec.mid_3m    = lookup_mid(mid_snapshots, b.end_time + 180.0);
             rec.mid_5m    = lookup_mid(mid_snapshots, b.end_time + 300.0);
             rec.mid_10m   = lookup_mid(mid_snapshots, b.end_time + 600.0);
+            rec.mkt       = ms;
             all_records.push_back(rec);
         }
 
@@ -232,10 +421,14 @@ int main(int argc, char* argv[]) {
     std::ofstream out(output_file);
     out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
         << "StartPrice,EndPrice,PeakPrice,CloseMid,"
-        << "Mid_1m,Mid_3m,Mid_5m,Mid_10m\n";
+        << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
+        << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
+        << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
+        << "TradeCount5m,TradeVolume5m\n";
 
     for (const auto& r : all_records) {
         const auto& b = r.burst;
+        const auto& m = r.mkt;
         out << r.ticker << "," << r.date << ","
             << b.id << ","
             << std::fixed << std::setprecision(6)
@@ -246,7 +439,15 @@ int main(int argc, char* argv[]) {
             << b.start_price << "," << b.end_price << "," << b.peak_price << ","
             << r.close_mid << ","
             << r.mid_1m << "," << r.mid_3m << ","
-            << r.mid_5m << "," << r.mid_10m
+            << r.mid_5m << "," << r.mid_10m << ","
+            << std::setprecision(6)
+            << m.spread << ","
+            << m.bid_vol_best << "," << m.ask_vol_best << ","
+            << m.bid_depth_5 << "," << m.ask_depth_5 << ","
+            << std::setprecision(6) << m.book_imbalance << ","
+            << std::setprecision(8) << m.volatility_60s << ","
+            << m.momentum_5s << "," << m.momentum_30s << "," << m.momentum_60s << ","
+            << m.trade_count_5m << "," << m.trade_volume_5m
             << "\n";
     }
     out.close();

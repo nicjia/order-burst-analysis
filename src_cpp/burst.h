@@ -22,7 +22,9 @@ public:
     // silence_threshold: time gap (seconds) that ends a burst
     // min_volume: minimum total volume for a burst to be output
     // direction_threshold: ratio (e.g., 0.7) of buy/total or sell/total to classify direction
-    BurstDetector(double silence_threshold, int min_volume, double direction_threshold);
+    // volume_ratio_threshold: max minority_vol / majority_vol ratio (e.g., 0.5) for directional bursts
+    BurstDetector(double silence_threshold, int min_volume, double direction_threshold,
+                  double volume_ratio_threshold = 0.5);
     
     // Returns true if a burst just finished (and passed filters)
     // If true, 'result' will contain that finished burst data
@@ -52,15 +54,18 @@ private:
     double silence_threshold_;
     int min_volume_;
     double direction_threshold_;
+    double volume_ratio_threshold_;
     
     bool is_active_;
     Burst current_burst_;
     double last_msg_time_;
     double last_mid_price_; 
     
-    // Track buy/sell counts to determine direction at burst end
+    // Track buy/sell counts and volumes to determine direction at burst end
     int buy_count_;
     int sell_count_;
+    int buy_volume_;
+    int sell_volume_;
     
     // Track both max and min since direction is unknown until end
     double max_price_;

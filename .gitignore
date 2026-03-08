@@ -3,3 +3,21 @@
 __pycache__/
 .env
 .DS_Store
+*.data
+*.csv.gz
+/NVDA_Results/
+############################################################
+# Model zoo results: ignore all JSON and PNG except key docs
+############################################################
+model_zoo_results/*.json
+model_zoo_results/*.png
+!model_zoo_results/leaderboard.md
+!model_zoo_results/MODEL_ZOO_REPORT.md
+
+# Results/plots: ignore PNGs, keep important docs
+results/**/*.png
+
+# Results: ignore metrics.json, keep code and docs
+results/**/metrics.json
+
+# Allow manual override: if you want to keep a file, remove from .gitignore

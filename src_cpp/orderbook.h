@@ -38,6 +38,18 @@ public:
     int get_best_bid() const;
     int get_best_ask() const;
 
+    // Spread in dollar terms: (best_ask - best_bid) / 10000
+    double get_spread() const;
+
+    // Total resting volume on bid/ask side across the top N price levels.
+    // N=0 means the entire side of the book.
+    int get_bid_depth(int levels = 0) const;
+    int get_ask_depth(int levels = 0) const;
+
+    // Volume at the best bid / best ask price level
+    int get_bid_volume_at_best() const;
+    int get_ask_volume_at_best() const;
+
     // True when both sides of the book have at least one resting order
     bool is_valid() const;
 

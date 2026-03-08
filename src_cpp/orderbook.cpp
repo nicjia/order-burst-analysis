@@ -98,3 +98,41 @@ double OrderBook::get_mid_price() const {
 bool OrderBook::is_valid() const {
     return !bids_.empty() && !asks_.empty();
 }
+
+double OrderBook::get_spread() const {
+    int bid = get_best_bid();
+    int ask = get_best_ask();
+    if (bid == 0 || ask == 0) return 0.0;
+    return (double)(ask - bid) / 10000.0;
+}
+
+int OrderBook::get_bid_depth(int levels) const {
+    if (bids_.empty()) return 0;
+    int total = 0, count = 0;
+    // bids_ is sorted ascending → iterate in reverse for top-of-book
+    for (auto it = bids_.rbegin(); it != bids_.rend(); ++it) {
+        total += it->second;
+        if (levels > 0 && ++count >= levels) break;
+    }
+    return total;
+}
+
+int OrderBook::get_ask_depth(int levels) const {
+    if (asks_.empty()) return 0;
+    int total = 0, count = 0;
+    for (auto it = asks_.begin(); it != asks_.end(); ++it) {
+        total += it->second;
+        if (levels > 0 && ++count >= levels) break;
+    }
+    return total;
+}
+
+int OrderBook::get_bid_volume_at_best() const {
+    if (bids_.empty()) return 0;
+    return bids_.rbegin()->second;
+}
+
+int OrderBook::get_ask_volume_at_best() const {
+    if (asks_.empty()) return 0;
+    return asks_.begin()->second;
+}

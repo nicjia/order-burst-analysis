@@ -1,15 +1,19 @@
 #include "burst.h"
 #include <cmath> // Required for std::abs
 
-BurstDetector::BurstDetector(double silence_threshold, int min_volume, double direction_threshold) 
+BurstDetector::BurstDetector(double silence_threshold, int min_volume, double direction_threshold,
+                             double volume_ratio_threshold) 
     : silence_threshold_(silence_threshold), 
       min_volume_(min_volume),
       direction_threshold_(direction_threshold),
+      volume_ratio_threshold_(volume_ratio_threshold),
       is_active_(false), 
       last_msg_time_(0),
       last_mid_price_(0),
       buy_count_(0),
       sell_count_(0),
+      buy_volume_(0),
+      sell_volume_(0),
       max_price_(0),
       min_price_(0) {}
 
@@ -19,7 +23,14 @@ bool BurstDetector::should_terminate(double time_gap) {
     return time_gap > silence_threshold_;
 }
 
-// ── CLASSIFICATION: Sets direction AND peak_price ────────────
+// ── CLASSIFICATION: Hybrid count + volume check (Eq 2.3) ─────
+//
+// Two conditions must hold for a directional classification:
+//   1. Count-based:  buy_ratio >= direction_threshold_  (or sell)
+//   2. Volume-based: minority_volume < volume_ratio_threshold_ × majority_volume
+//
+// Condition 2 prevents cases like "9 buys of 10 shares + 1 sell of 1000 shares"
+// from being classified as a Buy burst.
 void BurstDetector::classify_direction() {
     int total = buy_count_ + sell_count_;
     if (total == 0) return;
@@ -28,11 +39,31 @@ void BurstDetector::classify_direction() {
     double sell_ratio = (double)sell_count_ / total;
     
     if (buy_ratio >= direction_threshold_) {
-        current_burst_.direction = 1;   // Buy burst
-        current_burst_.peak_price = max_price_;
+        // Count says Buy – verify volume doesn't contradict
+        double minority_vol = (double)sell_volume_;
+        double majority_vol = (double)buy_volume_;
+        if (majority_vol > 0 && minority_vol <= volume_ratio_threshold_ * majority_vol) {
+            current_burst_.direction = 1;   // Buy burst
+            current_burst_.peak_price = max_price_;
+        } else {
+            current_burst_.direction = 0;   // Counts say Buy, but volume is contradictory
+            double up_move = std::abs(max_price_ - current_burst_.start_price);
+            double down_move = std::abs(min_price_ - current_burst_.start_price);
+            current_burst_.peak_price = (up_move >= down_move) ? max_price_ : min_price_;
+        }
     } else if (sell_ratio >= direction_threshold_) {
-        current_burst_.direction = -1;  // Sell burst
-        current_burst_.peak_price = min_price_;
+        // Count says Sell – verify volume doesn't contradict
+        double minority_vol = (double)buy_volume_;
+        double majority_vol = (double)sell_volume_;
+        if (majority_vol > 0 && minority_vol <= volume_ratio_threshold_ * majority_vol) {
+            current_burst_.direction = -1;  // Sell burst
+            current_burst_.peak_price = min_price_;
+        } else {
+            current_burst_.direction = 0;   // Counts say Sell, but volume is contradictory
+            double up_move = std::abs(max_price_ - current_burst_.start_price);
+            double down_move = std::abs(min_price_ - current_burst_.start_price);
+            current_burst_.peak_price = (up_move >= down_move) ? max_price_ : min_price_;
+        }
     } else {
         current_burst_.direction = 0;   // Mixed
         // Use std::abs for safer distance calculation
@@ -75,6 +106,8 @@ void BurstDetector::reset() {
     last_mid_price_ = 0;
     buy_count_ = 0;
     sell_count_ = 0;
+    buy_volume_ = 0;
+    sell_volume_ = 0;
     max_price_ = 0;
     min_price_ = 0;
     current_burst_ = {};
@@ -137,6 +170,8 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
         
         buy_count_ = 0;
         sell_count_ = 0;
+        buy_volume_ = 0;
+        sell_volume_ = 0;
         
         // Initialize extremes to include both start_price and current_mid
         max_price_ = std::max(current_burst_.start_price, current_mid);
@@ -147,8 +182,13 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
     current_burst_.volume += msg.size;
     
     // LOBSTER Direction: -1 = Buyer-initiated, 1 = Seller-initiated
-    if (msg.direction == -1) buy_count_++;
-    else sell_count_++;
+    if (msg.direction == -1) {
+        buy_count_++;
+        buy_volume_ += msg.size;
+    } else {
+        sell_count_++;
+        sell_volume_ += msg.size;
+    }
     
     // Track extremes
     max_price_ = std::max(max_price_, current_mid);
