@@ -6,7 +6,8 @@
 #$ -pe shared 8
 #$ -N nvda_baseline
 
-set -euo pipefail
+set -Eeo pipefail
+trap 'echo "ERROR: command failed at line $LINENO" >&2' ERR
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 TICKER=${TICKER:-NVDA}
