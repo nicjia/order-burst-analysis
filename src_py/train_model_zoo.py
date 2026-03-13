@@ -40,11 +40,11 @@ MODELS (classification):
   └────────────────────────────────────────────────────────────────────┘
 
 TARGETS:
-  - Binary:  φ_tCLOSE > 1  (default)
-  - Binary:  φ_t1m > 1
-  - Binary:  φ_t3m > 1
-  - Binary:  φ_t5m > 1
-  - Binary:  φ_t10m > 1
+    - Binary:  φ_tCLOSE > 0  (default)
+    - Binary:  φ_t1m > 0
+    - Binary:  φ_t3m > 0
+    - Binary:  φ_t5m > 0
+    - Binary:  φ_t10m > 0
   - 3-class: reversed / neutral / persisted
   - Regression: φ_tCLOSE (winsorized, Huber)
 
@@ -212,9 +212,11 @@ DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
 }
 
-# Targets whose horizon is strictly shorter than the longest component of D_b (10m).
-# For these targets, using D_b would constitute look-ahead bias.
-DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'reg_1m', 'reg_3m', 'reg_5m'}
+# Targets whose horizon is ≤ 10m.  D_b averages displacements at 1/3/5/10m,
+# so it leaks future prices for ALL intraday horizons (including 10m itself,
+# since Mid_10m is both a D_b input and the basis of Perm_t10m).
+DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m',
+                    'reg_1m', 'reg_3m', 'reg_5m', 'reg_10m'}
 
 EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     'TimeOfDay', 'LogVolume', 'LogPeakImpact', 'ImpactPerShare',
@@ -375,13 +377,19 @@ def engineer_features(df):
 # ═════════════════════════════════════════════════════════════════
 
 TARGET_MAP = {
-    'cls_close':  ('Perm_tCLOSE', 'binary',  1.0),   # φ_tCLOSE > 1
-    'cls_1m':     ('Perm_t1m',     'binary',  1.0),   # φ_t1m > 1
-    'cls_3m':     ('Perm_t3m',     'binary',  1.0),   # φ_t3m > 1
-    'cls_5m':     ('Perm_t5m',     'binary',  1.0),   # φ_t5m > 1
-    'cls_10m':    ('Perm_t10m',    'binary',  1.0),   # φ_t10m > 1
-    'cls_3class': ('Perm_tCLOSE', '3class',  None),   # reversed/neutral/persisted
+    # ── Intraday horizons (use UNFILTERED data only) ─────────
+    'cls_1m':     ('Perm_t1m',     'binary',  0.0),   # φ_t1m > 0
+    'cls_3m':     ('Perm_t3m',     'binary',  0.0),   # φ_t3m > 0
+    'cls_5m':     ('Perm_t5m',     'binary',  0.0),   # φ_t5m > 0
+    'cls_10m':    ('Perm_t10m',    'binary',  0.0),   # φ_t10m > 0
+    # ── End-of-day / next-day (valid on filtered OR unfiltered) ─
+    'cls_close':  ('Perm_tCLOSE', 'binary',  0.0),   # φ_tCLOSE > 0  (same-day 4pm)
+    'cls_clop':   ('Perm_CLOP',   'binary',  0.0),   # φ_CLOP > 0    (next-day open)
+    'cls_clcl':   ('Perm_CLCL',   'binary',  0.0),   # φ_CLCL > 0    (next-day close)
+    # ── Regression ───────────────────────────────────────────
     'reg_close':  ('Perm_tCLOSE', 'regression', None),
+    'reg_clop':   ('Perm_CLOP',   'regression', None),
+    'reg_clcl':   ('Perm_CLCL',   'regression', None),
     'reg_1m':     ('Perm_t1m',     'regression', None),
     'reg_5m':     ('Perm_t5m',     'regression', None),
 }
@@ -401,9 +409,9 @@ def build_target(df, target_key):
         return y, 'binary', {'pos_rate': y.mean(), 'threshold': threshold}
 
     elif task == '3class':
-        # reversed: φ < 0.5, neutral: 0.5 ≤ φ ≤ 1.5, persisted: φ > 1.5
-        y = np.where(vals < 0.5, 0,
-            np.where(vals > 1.5, 2, 1))
+        # reversed: φ < -0.5, neutral: -0.5 ≤ φ ≤ 0.5, persisted: φ > 0.5
+        y = np.where(vals < -0.5, 0,
+            np.where(vals > 0.5, 2, 1))
         return y, 'multiclass', {
             'class_dist': {0: (y==0).mean(), 1: (y==1).mean(), 2: (y==2).mean()}}
 
@@ -1229,7 +1237,7 @@ def aggregate_results(outdir):
         f.write(f"Generated: {datetime.now().isoformat()}\n\n")
 
         if cls_results:
-            f.write("## Classification (target: φ > 1)\n\n")
+            f.write("## Classification (target: φ > 0)\n\n")
             f.write("| Rank | Model | Target | AUC | Accuracy | F1 | Brier | Time |\n")
             f.write("|------|-------|--------|-----|----------|----|-------|------|\n")
             for i, r in enumerate(cls_results):
@@ -1363,6 +1371,12 @@ def get_target_list(target_arg):
         return [k for k, v in TARGET_MAP.items() if v[1] == 'regression']
     elif target_arg == 'all_horizons':
         return ['cls_close', 'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m']
+    elif target_arg == 'short':
+        # Intraday horizons — run on UNFILTERED data only
+        return ['cls_1m', 'cls_3m', 'cls_5m', 'cls_10m']
+    elif target_arg == 'long':
+        # End-of-day / next-day — valid on filtered data
+        return ['cls_close', 'cls_clop', 'cls_clcl']
     else:
         return target_arg.split(',')
 

@@ -21,6 +21,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <dirent.h>
 
 #include "parser.h"
@@ -155,6 +156,7 @@ struct BurstRecord {
     double mid_3m;      // mid at end_time + 180 s
     double mid_5m;      // mid at end_time + 300 s
     double mid_10m;     // mid at end_time + 600 s
+    double d_b;         // short-horizon decay metric
     MarketState mkt;    // book state at burst start
 };
 
@@ -165,13 +167,14 @@ void print_usage(const char* prog) {
               << "  stock_folder: folder containing *_message_0.csv day files\n"
               << "  output_file:  output CSV path\n"
               << "Options:\n"
-              << "  -s <silence>    silence threshold in seconds (default: 1.0)\n"
-              << "  -v <min_vol>    minimum burst volume in shares  (default: 100)\n"
-              << "  -d <direction>  direction ratio threshold        (default: 0.9)\n"
-              << "  -k <kappa>      kappa filter parameter            (default: 0.5)\n"
-              << "  -t <tau_max>    peak-impact horizon in seconds    (default: 10.0)\n"
-              << "  -b <rth_start>  RTH start in sec-past-midnight    (default: 34200 = 09:30)\n"
-              << "  -e <rth_end>    RTH end   in sec-past-midnight    (default: 57600 = 16:00)\n";
+              << "  -s <silence>    silence threshold in seconds       (default: 1.0)\n"
+              << "  -v <min_vol>    minimum burst volume in shares     (default: 100)\n"
+              << "  -d <direction>  direction count-ratio threshold    (default: 0.9)\n"
+              << "  -r <vol_ratio>  volume ratio cap for directional   (default: 0.5)\n"
+              << "  -k <kappa>      kappa filter parameter             (default: 0.5)\n"
+              << "  -t <tau_max>    peak-impact horizon in seconds     (default: 10.0)\n"
+              << "  -b <rth_start>  RTH start in sec-past-midnight     (default: 34200 = 09:30)\n"
+              << "  -e <rth_end>    RTH end   in sec-past-midnight     (default: 57600 = 16:00)\n";
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -408,6 +411,30 @@ int main(int argc, char* argv[]) {
             rec.mid_3m    = lookup_mid(mid_snapshots, b.end_time + 180.0);
             rec.mid_5m    = lookup_mid(mid_snapshots, b.end_time + 300.0);
             rec.mid_10m   = lookup_mid(mid_snapshots, b.end_time + 600.0);
+            // D_b = (1/4) Σ Q_b × Direction × (Mid_τ − StartPrice)
+            double dsum = 0.0;
+            int dcount = 0;
+            auto accum = [&](double mid) {
+                if (mid > 0.0) {
+                    dsum += (double)b.volume * (double)b.direction * (mid - b.start_price);
+                    dcount++;
+                }
+            };
+            accum(rec.mid_1m);
+            accum(rec.mid_3m);
+            accum(rec.mid_5m);
+            accum(rec.mid_10m);
+            rec.d_b = (dcount > 0)
+                ? (dsum / dcount)
+                : std::numeric_limits<double>::quiet_NaN();
+
+            // Apply kappa filter here to drop bursts before output
+            if (kappa > 0.0) {
+                if (std::isnan(rec.d_b) || rec.d_b < kappa) {
+                    continue;
+                }
+            }
+
             rec.mkt       = ms;
             all_records.push_back(rec);
         }
@@ -419,7 +446,7 @@ int main(int argc, char* argv[]) {
 
     // ── Write output CSV ────────────────────────────────────
     std::ofstream out(output_file);
-    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
+    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,D_b,"
         << "StartPrice,EndPrice,PeakPrice,CloseMid,"
         << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
         << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
@@ -435,6 +462,7 @@ int main(int argc, char* argv[]) {
             << b.start_time << "," << b.end_time << ","
             << b.direction << "," << b.volume << ","
             << b.trade_count << ","
+            << r.d_b << ","
             << std::setprecision(4)
             << b.start_price << "," << b.end_price << "," << b.peak_price << ","
             << r.close_mid << ","

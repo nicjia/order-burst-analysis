@@ -17,8 +17,8 @@ Feature set Z_b (all observable at burst end time t_b + ε):
   └─────────────────────────────────────────────────────────────┘
 
 Targets (all computed from future prices — used as labels only):
-  - Classification:  1{φ(b; tCLOSE) > 1}  — did the burst persist to close?
-  - Regression:      φ(b; tCLOSE) (winsorized)
+    - Classification:  1{φ(b; tCLOSE) > 0}  — did the burst persist to close?
+    - Regression:      φ(b; tCLOSE) (winsorized)
 
 Validation:  Walk-forward (expanding window) by month.
   Train on all data up to month M, test on month M+1.
@@ -199,13 +199,13 @@ def engineer_features(df):
 
 def build_targets(df, winsor_pct=1):
     """
-    Classification target:  y_cls = 1 if Perm_tCLOSE > 1  (burst persisted)
+    Classification target:  y_cls = 1 if Perm_tCLOSE > 0  (burst persisted)
     Regression target:      y_reg = Perm_tCLOSE winsorized to [p1, p99]
     """
     df = df.copy()
 
     # Classification: did the burst impact persist to close?
-    df['y_cls'] = (df['Perm_tCLOSE'] > 1).astype(int)
+    df['y_cls'] = (df['Perm_tCLOSE'] > 0).astype(int)
 
     # Regression: winsorize extreme φ values
     lo = df['Perm_tCLOSE'].quantile(winsor_pct / 100)
@@ -373,7 +373,7 @@ def plot_walk_forward_auc(results_cls, outdir):
     ax.axhline(0.5, color='grey', ls='--', lw=0.8, label='Random (0.5)')
     ax.set_ylabel('AUC')
     ax.set_xlabel('Test Month')
-    ax.set_title('Walk-Forward AUC — Persistence Classification (φ > 1)',
+    ax.set_title('Walk-Forward AUC — Persistence Classification (φ > 0)',
                  fontweight='bold')
     ax.legend()
     ax.tick_params(axis='x', rotation=45)
@@ -573,7 +573,7 @@ def main():
     all_y_prob_lgb = np.array(all_y_prob_lgb)
 
     pooled_cls = eval_classification(all_y_true_cls, all_y_prob_lgb)
-    print(f"\n  Classification — LightGBM (target: φ_tCLOSE > 1)")
+    print(f"\n  Classification — LightGBM (target: φ_tCLOSE > 0)")
     for k, v in pooled_cls.items():
         if isinstance(v, float):
             print(f"    {k:12s} = {v:.4f}")
@@ -645,7 +645,7 @@ def main():
         f.write(f"Walk-forward CV: {len(splits)} monthly folds "
                 f"({splits[0][2]} → {splits[-1][2]})\n\n")
 
-        f.write("## Classification: P(φ_tCLOSE > 1)\n\n")
+        f.write("## Classification: P(φ_tCLOSE > 0)\n\n")
         f.write("| Model | AUC | Accuracy | Precision | Recall | F1 | Brier |\n")
         f.write("|-------|-----|----------|-----------|--------|----|----- -|\n")
         f.write(f"| LightGBM | {pooled_cls['AUC']:.4f} | {pooled_cls['Accuracy']:.4f} | "

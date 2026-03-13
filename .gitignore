@@ -21,3 +21,10 @@ results/**/*.png
 results/**/metrics.json
 
 # Allow manual override: if you want to keep a file, remove from .gitignore
+
+results/zoo_bursts_NVDA_filtered/*.json
+results/zoo_bursts_NVDA_filtered/*.png
+!results/zoo_bursts_NVDA_filtered/leaderboard.md
+!results/zoo_bursts_NVDA_filtered/MODEL_ZOO_REPORT.md
+
+data/
