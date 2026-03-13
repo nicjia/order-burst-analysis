@@ -7,7 +7,7 @@
 #$ -N nvda_baseline
 
 set -Eeo pipefail
-trap 'echo "ERROR: command failed at line $LINENO" >&2' ERR
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 TICKER=${TICKER:-NVDA}
@@ -45,10 +45,36 @@ echo "Sweep silence: ${SILENCE_VALUES}"
 echo "============================================="
 
 cd "${ROOT}"
-. /etc/profile
+
+# --- TEMPORARILY DISABLE STRICT ERROR HANDLING FOR SYSTEM SCRIPTS ---
+set +Eeo pipefail
+trap - ERR
+
+# Use Hoffman module initialization directly; /etc/profile can be shell-specific.
+if [ -f /u/local/Modules/default/init/bash ]; then
+  . /u/local/Modules/default/init/bash
+elif [ -f /etc/profile.d/modules.sh ]; then
+  . /etc/profile.d/modules.sh
+fi
+
+if ! command -v module >/dev/null 2>&1; then
+  echo "ERROR: 'module' command not available after environment init" >&2
+  exit 1
+fi
+
+# Hoffman2 (UCLA HPC): module load gcc/11.3.0 (or any gcc >= 7 with C++17) 
 module load gcc/11.3.0
 module load python/3.9.6
+
+if [ ! -f "${ROOT}/.venv/bin/activate" ]; then
+  echo "ERROR: Python venv missing at ${ROOT}/.venv" >&2
+  exit 1
+fi
 source "${ROOT}/.venv/bin/activate"
+
+# --- RE-ENABLE STRICT ERROR HANDLING ---
+set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 TOTAL_START=$(date +%s)
 
@@ -56,7 +82,7 @@ stage_time() {
   local stage_name="$1"
   shift
   local t0 t1 dt
-  echo "\n---- ${stage_name} START: $(date '+%F %T') ----"
+  echo -e "\n---- ${stage_name} START: $(date '+%F %T') ----"
   t0=$(date +%s)
   "$@"
   t1=$(date +%s)
@@ -64,7 +90,7 @@ stage_time() {
   echo "---- ${stage_name} END:   $(date '+%F %T') (${dt}s) ----"
 }
 
-stage_time "BUILD" make clean
+make clean || true
 stage_time "BUILD" make
 
 stage_time "DATA_PROCESSOR" \
@@ -107,7 +133,7 @@ stage_time "SILENCE_SWEEP" \
 TOTAL_END=$(date +%s)
 TOTAL_DT=$((TOTAL_END - TOTAL_START))
 
-echo "\n========== BASELINE PIPELINE DONE =========="
+echo -e "\n========== BASELINE PIPELINE DONE =========="
 echo "End:   $(date '+%F %T')"
 echo "Total runtime: ${TOTAL_DT}s"
 echo "Bursts file: ${BURSTS_CSV}"
