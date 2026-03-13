@@ -2,9 +2,9 @@
 #$ -cwd
 #$ -j y
 #$ -o /u/scratch/n/nicjia/order-burst-analysis/logs/baseline_pipeline_$JOB_ID.out
-#$ -l h_data=16G,h_rt=12:00:00
+#$ -l h_data=64G,h_rt=12:00:00
 #$ -pe shared 8
-#$ -N nvda_baseline
+#$ -N nvda_baseline_resume
 
 set -Eeo pipefail
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
@@ -30,7 +30,7 @@ SWEEP_OUTDIR="${ROOT}/results/silence_sweep_${TICKER}"
 
 mkdir -p "${ROOT}/logs" "${ROOT}/results"
 
-echo "========== BASELINE PIPELINE START =========="
+echo "========== BASELINE PIPELINE RESUME START =========="
 echo "Job ID: ${JOB_ID:-N/A}"
 echo "Host: $(hostname)"
 echo "Start: $(date '+%F %T')"
@@ -41,7 +41,6 @@ echo "Model: ${MODEL_KEY}"
 echo "Target: ${TARGET_KEY}"
 echo "Sweep model: ${SWEEP_MODEL}"
 echo "Sweep target: ${SWEEP_TARGET}"
-echo "Sweep silence: ${SILENCE_VALUES}"
 echo "============================================="
 
 cd "${ROOT}"
@@ -50,26 +49,15 @@ cd "${ROOT}"
 set +Eeo pipefail
 trap - ERR
 
-# Use Hoffman module initialization directly; /etc/profile can be shell-specific.
 if [ -f /u/local/Modules/default/init/bash ]; then
   . /u/local/Modules/default/init/bash
 elif [ -f /etc/profile.d/modules.sh ]; then
   . /etc/profile.d/modules.sh
 fi
 
-if ! command -v module >/dev/null 2>&1; then
-  echo "ERROR: 'module' command not available after environment init" >&2
-  exit 1
-fi
-
-# Hoffman2 (UCLA HPC): module load gcc/11.3.0 (or any gcc >= 7 with C++17) 
 module load gcc/11.3.0
 module load python/3.9.6
 
-if [ ! -f "${ROOT}/.venv/bin/activate" ]; then
-  echo "ERROR: Python venv missing at ${ROOT}/.venv" >&2
-  exit 1
-fi
 source "${ROOT}/.venv/bin/activate"
 
 # --- RE-ENABLE STRICT ERROR HANDLING ---
@@ -90,16 +78,22 @@ stage_time() {
   echo "---- ${stage_name} END:   $(date '+%F %T') (${dt}s) ----"
 }
 
-make clean || true
-stage_time "BUILD" make
+# ==========================================================
+# SKIPPING COMPLETED STAGES
+# ==========================================================
+# make clean || true
+# stage_time "BUILD" make
+#
+# stage_time "DATA_PROCESSOR" \
+#   ./data_processor "${ROOT}/data/${TICKER}" "${BURSTS_CSV}" \
+#   -s "${SILENCE}" -v 1 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
+#
+# stage_time "COMPUTE_PERMANENCE" \
+#   python "${ROOT}/src_py/compute_permanence.py" \
+#   "${BURSTS_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa 0
+# ==========================================================
 
-stage_time "DATA_PROCESSOR" \
-  ./data_processor "${ROOT}/data/${TICKER}" "${BURSTS_CSV}" \
-  -s "${SILENCE}" -v 1 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
-
-stage_time "COMPUTE_PERMANENCE" \
-  python "${ROOT}/src_py/compute_permanence.py" \
-  "${BURSTS_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa 0
+echo -e "\nSkipped Build, Data Processor, and Permanence steps. Resuming at MODEL_ZOO..."
 
 stage_time "MODEL_ZOO" \
   python "${ROOT}/src_py/train_model_zoo.py" \
@@ -136,8 +130,8 @@ TOTAL_DT=$((TOTAL_END - TOTAL_START))
 echo -e "\n========== BASELINE PIPELINE DONE =========="
 echo "End:   $(date '+%F %T')"
 echo "Total runtime: ${TOTAL_DT}s"
-echo "Bursts file: ${BURSTS_CSV}"
-echo "Filtered file: ${FILTERED_CSV}"
+echo "Bursts file: ${BURSTS_CSV} (From previous run)"
+echo "Filtered file: ${FILTERED_CSV} (From previous run)"
 echo "Zoo output: ${ZOO_OUTDIR}"
 echo "Sweep output: ${SWEEP_OUTDIR}"
 echo "==========================================="
