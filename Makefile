@@ -10,7 +10,7 @@
 # ─────────────────────────────────────────────────────────────
 
 CXX      = g++
-CXXFLAGS = -std=c++17 -O3 -Wall
+CXXFLAGS = -std=c++17 -O3 -Wall -pthread
 
 SRC_DIR  = src_cpp
 SRCS     = $(SRC_DIR)/main.cpp \

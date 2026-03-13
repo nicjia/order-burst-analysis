@@ -93,6 +93,7 @@ def main():
     ap.add_argument("--open", required=True, help="open_all.csv path")
     ap.add_argument("--close", required=True, help="close_all.csv path")
     ap.add_argument("--data-processor", default="./data_processor", help="Path to C++ binary")
+    ap.add_argument("--workers", type=int, default=1, help="Parallel day workers for data_processor (-j)")
     ap.add_argument("--outdir", default="results/silence_sweep", help="Output root")
 
     ap.add_argument("--silence-values", required=True, help="Comma list, e.g. 0.5,1,2")
@@ -144,6 +145,7 @@ def main():
             "-r", "1.0",
             "-k", "0",
             "-t", str(args.tau_max),
+            "-j", str(max(1, args.workers)),
             "-b", str(args.rth_start),
             "-e", str(args.rth_end),
         ])

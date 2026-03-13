@@ -22,6 +22,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <thread>
+#include <atomic>
+#include <cerrno>
+#include <cstring>
 #include <dirent.h>
 
 #include "parser.h"
@@ -160,6 +164,14 @@ struct BurstRecord {
     MarketState mkt;    // book state at burst start
 };
 
+struct DayResult {
+    std::string date;
+    long msg_count = 0;
+    size_t bbo_updates = 0;
+    size_t burst_candidates = 0;
+    std::vector<BurstRecord> records;
+};
+
 // ── Usage ───────────────────────────────────────────────────
 
 void print_usage(const char* prog) {
@@ -173,6 +185,7 @@ void print_usage(const char* prog) {
               << "  -r <vol_ratio>  volume ratio cap for directional   (default: 0.5)\n"
               << "  -k <kappa>      kappa filter parameter             (default: 0.5)\n"
               << "  -t <tau_max>    peak-impact horizon in seconds     (default: 10.0)\n"
+              << "  -j <workers>    number of parallel day workers     (default: 1)\n"
               << "  -b <rth_start>  RTH start in sec-past-midnight     (default: 34200 = 09:30)\n"
               << "  -e <rth_end>    RTH end   in sec-past-midnight     (default: 57600 = 16:00)\n";
 }
@@ -188,6 +201,17 @@ int main(int argc, char* argv[]) {
     std::string stock_folder = argv[1];
     std::string output_file  = argv[2];
 
+    // Fail fast if output path is not writable (common shell continuation typo: "\\  ").
+    {
+        std::ofstream out_probe(output_file);
+        if (!out_probe.is_open()) {
+            std::cerr << "Error: cannot open output file path: '" << output_file << "'\n"
+                      << "Reason: " << std::strerror(errno) << "\n"
+                      << "Tip: avoid backslash+spaces in multiline shell commands; use a single-line command.\n";
+            return 1;
+        }
+    }
+
     double silence_threshold   = 1.0;
     int    min_volume          = 100;
     double direction_threshold = 0.9;
@@ -196,6 +220,7 @@ int main(int argc, char* argv[]) {
     double tau_max             = 10.0;  // microstructure horizon for peak impact
     double rth_start            = RTH_DEFAULT_START;
     double rth_end              = RTH_DEFAULT_END;
+    int workers                 = 1;
 
     for (int i = 3; i < argc; i += 2) {
         if (i + 1 >= argc) break;
@@ -206,6 +231,7 @@ int main(int argc, char* argv[]) {
         else if (opt == "-r") volume_ratio_threshold = std::stod(argv[i+1]);
         else if (opt == "-k") kappa               = std::stod(argv[i+1]);
         else if (opt == "-t") tau_max             = std::stod(argv[i+1]);
+        else if (opt == "-j") workers             = std::max(1, std::stoi(argv[i+1]));
         else if (opt == "-b") rth_start           = std::stod(argv[i+1]);
         else if (opt == "-e") rth_end             = std::stod(argv[i+1]);
     }
@@ -227,14 +253,14 @@ int main(int argc, char* argv[]) {
               << "  vol_ratio_thresh=" << volume_ratio_threshold
               << "  kappa=" << kappa
               << "  tau_max=" << tau_max
+              << "  workers=" << workers
               << "  RTH=[" << rth_start << "," << rth_end << "]\n\n";
 
     std::vector<BurstRecord> all_records;
 
-    // ── Process each trading day ────────────────────────────
-    for (const auto& msg_file : msg_files) {
-        std::string date = extract_date(msg_file);
-        std::cout << "  " << date << " … " << std::flush;
+    auto process_day_file = [&](const std::string& msg_file) -> DayResult {
+        DayResult day_res;
+        day_res.date = extract_date(msg_file);
 
         // Fresh book & detector per day (pre-open rebuilds the book)
         OrderBook     book;
@@ -404,7 +430,7 @@ int main(int argc, char* argv[]) {
 
             BurstRecord rec;
             rec.ticker    = ticker;
-            rec.date      = date;
+            rec.date      = day_res.date;
             rec.burst     = b;
             rec.close_mid = close_mid;
             rec.mid_1m    = lookup_mid(mid_snapshots, b.end_time + 60.0);
@@ -436,12 +462,46 @@ int main(int argc, char* argv[]) {
             }
 
             rec.mkt       = ms;
-            all_records.push_back(rec);
+            day_res.records.push_back(rec);
         }
 
-        std::cout << msg_count << " msgs, "
-                  << mid_snapshots.size() << " BBO updates, "
-                  << day_bursts.size() << " bursts\n";
+        day_res.msg_count = msg_count;
+        day_res.bbo_updates = mid_snapshots.size();
+        day_res.burst_candidates = day_bursts.size();
+        return day_res;
+    };
+
+    std::vector<DayResult> day_results(msg_files.size());
+
+    if (workers <= 1 || msg_files.size() <= 1) {
+        for (size_t i = 0; i < msg_files.size(); ++i) {
+            day_results[i] = process_day_file(msg_files[i]);
+        }
+    } else {
+        int nthreads = std::min<int>(workers, (int)msg_files.size());
+        std::atomic<size_t> next_idx{0};
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads);
+
+        for (int t = 0; t < nthreads; ++t) {
+            pool.emplace_back([&]() {
+                while (true) {
+                    size_t i = next_idx.fetch_add(1);
+                    if (i >= msg_files.size()) break;
+                    day_results[i] = process_day_file(msg_files[i]);
+                }
+            });
+        }
+        for (auto& th : pool) th.join();
+    }
+
+    for (size_t i = 0; i < day_results.size(); ++i) {
+        const auto& d = day_results[i];
+        std::cout << "  " << d.date << " … "
+                  << d.msg_count << " msgs, "
+                  << d.bbo_updates << " BBO updates, "
+                  << d.burst_candidates << " bursts\n";
+        all_records.insert(all_records.end(), d.records.begin(), d.records.end());
     }
 
     // ── Write output CSV ────────────────────────────────────
@@ -486,7 +546,7 @@ int main(int argc, char* argv[]) {
     out.close();
 
     std::cout << "\nTotal bursts across all days: " << all_records.size() << "\n";
-    std::cout << "Output: " << output_file << "\n";
+    std::cout << "Output: '" << output_file << "'\n";
 
     return 0;
 }
