@@ -24,6 +24,8 @@
 #include <limits>
 #include <thread>
 #include <atomic>
+#include <mutex>
+#include <chrono>
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
@@ -169,7 +171,7 @@ struct DayResult {
     long msg_count = 0;
     size_t bbo_updates = 0;
     size_t burst_candidates = 0;
-    std::vector<BurstRecord> records;
+    size_t burst_kept = 0;
 };
 
 // ── Usage ───────────────────────────────────────────────────
@@ -256,11 +258,35 @@ int main(int argc, char* argv[]) {
               << "  workers=" << workers
               << "  RTH=[" << rth_start << "," << rth_end << "]\n\n";
 
-    std::vector<BurstRecord> all_records;
+    // Open output once and stream results as each day finishes.
+    std::ofstream out(output_file);
+    if (!out.is_open()) {
+        std::cerr << "Error: cannot open output file path: '" << output_file << "'\n"
+                  << "Reason: " << std::strerror(errno) << "\n";
+        return 1;
+    }
+    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
+        << "BuyCount,SellCount,BuyVolume,SellVolume,BuyRatio,SellRatio,MinMaxVolRatio,D_b,"
+        << "StartPrice,EndPrice,PeakPrice,CloseMid,"
+        << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
+        << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
+        << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
+        << "TradeCount5m,TradeVolume5m\n";
 
-    auto process_day_file = [&](const std::string& msg_file) -> DayResult {
+    std::mutex log_mutex;
+    std::mutex write_mutex;
+    auto t0 = std::chrono::steady_clock::now();
+
+    auto process_day_file = [&](const std::string& msg_file, size_t day_idx, size_t total_days,
+                                std::atomic<size_t>& done_counter) -> DayResult {
         DayResult day_res;
         day_res.date = extract_date(msg_file);
+
+        {
+            std::lock_guard<std::mutex> lk(log_mutex);
+            std::cout << "[start " << (day_idx + 1) << "/" << total_days << "] "
+                      << day_res.date << " thread=" << std::this_thread::get_id() << "\n";
+        }
 
         // Fresh book & detector per day (pre-open rebuilds the book)
         OrderBook     book;
@@ -425,6 +451,7 @@ int main(int argc, char* argv[]) {
         double close_mid = current_mid;
 
         // 4. Compute peak impact (tau_max) and forward-return mid-prices
+        std::ostringstream day_csv;
         for (auto& [b, ms] : day_bursts) {
             b.peak_price = find_peak_price(mid_snapshots, b.start_time, b.start_price, tau_max, b.direction);
 
@@ -462,20 +489,62 @@ int main(int argc, char* argv[]) {
             }
 
             rec.mkt       = ms;
-            day_res.records.push_back(rec);
+            day_csv << rec.ticker << "," << rec.date << ","
+                    << b.id << ","
+                    << std::fixed << std::setprecision(6)
+                    << b.start_time << "," << b.end_time << ","
+                    << b.direction << "," << b.volume << ","
+                    << b.trade_count << ","
+                    << b.buy_count << "," << b.sell_count << ","
+                    << b.buy_volume << "," << b.sell_volume << ","
+                    << b.buy_ratio << "," << b.sell_ratio << ","
+                    << b.minmax_vol_ratio << ","
+                    << rec.d_b << ","
+                    << std::setprecision(4)
+                    << b.start_price << "," << b.end_price << "," << b.peak_price << ","
+                    << rec.close_mid << ","
+                    << rec.mid_1m << "," << rec.mid_3m << ","
+                    << rec.mid_5m << "," << rec.mid_10m << ","
+                    << std::setprecision(6)
+                    << ms.spread << ","
+                    << ms.bid_vol_best << "," << ms.ask_vol_best << ","
+                    << ms.bid_depth_5 << "," << ms.ask_depth_5 << ","
+                    << std::setprecision(6) << ms.book_imbalance << ","
+                    << std::setprecision(8) << ms.volatility_60s << ","
+                    << ms.momentum_5s << "," << ms.momentum_30s << "," << ms.momentum_60s << ","
+                    << ms.trade_count_5m << "," << ms.trade_volume_5m
+                    << "\n";
+            day_res.burst_kept++;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(write_mutex);
+            out << day_csv.str();
         }
 
         day_res.msg_count = msg_count;
         day_res.bbo_updates = mid_snapshots.size();
         day_res.burst_candidates = day_bursts.size();
+
+        size_t done = done_counter.fetch_add(1) + 1;
+        {
+            std::lock_guard<std::mutex> lk(log_mutex);
+            std::cout << "[done  " << done << "/" << total_days << "] "
+                      << day_res.date << " thread=" << std::this_thread::get_id()
+                      << " msgs=" << day_res.msg_count
+                      << " bursts=" << day_res.burst_candidates
+                      << " kept=" << day_res.burst_kept << "\n";
+        }
+
         return day_res;
     };
 
     std::vector<DayResult> day_results(msg_files.size());
+    std::atomic<size_t> done_counter{0};
 
     if (workers <= 1 || msg_files.size() <= 1) {
         for (size_t i = 0; i < msg_files.size(); ++i) {
-            day_results[i] = process_day_file(msg_files[i]);
+            day_results[i] = process_day_file(msg_files[i], i, msg_files.size(), done_counter);
         }
     } else {
         int nthreads = std::min<int>(workers, (int)msg_files.size());
@@ -488,7 +557,7 @@ int main(int argc, char* argv[]) {
                 while (true) {
                     size_t i = next_idx.fetch_add(1);
                     if (i >= msg_files.size()) break;
-                    day_results[i] = process_day_file(msg_files[i]);
+                    day_results[i] = process_day_file(msg_files[i], i, msg_files.size(), done_counter);
                 }
             });
         }
@@ -500,52 +569,19 @@ int main(int argc, char* argv[]) {
         std::cout << "  " << d.date << " … "
                   << d.msg_count << " msgs, "
                   << d.bbo_updates << " BBO updates, "
-                  << d.burst_candidates << " bursts\n";
-        all_records.insert(all_records.end(), d.records.begin(), d.records.end());
+                  << d.burst_candidates << " bursts"
+                  << " (kept " << d.burst_kept << ")\n";
     }
-
-    // ── Write output CSV ────────────────────────────────────
-    std::ofstream out(output_file);
-    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
-        << "BuyCount,SellCount,BuyVolume,SellVolume,BuyRatio,SellRatio,MinMaxVolRatio,D_b,"
-        << "StartPrice,EndPrice,PeakPrice,CloseMid,"
-        << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
-        << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
-        << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
-        << "TradeCount5m,TradeVolume5m\n";
-
-    for (const auto& r : all_records) {
-        const auto& b = r.burst;
-        const auto& m = r.mkt;
-        out << r.ticker << "," << r.date << ","
-            << b.id << ","
-            << std::fixed << std::setprecision(6)
-            << b.start_time << "," << b.end_time << ","
-            << b.direction << "," << b.volume << ","
-            << b.trade_count << ","
-            << b.buy_count << "," << b.sell_count << ","
-            << b.buy_volume << "," << b.sell_volume << ","
-            << b.buy_ratio << "," << b.sell_ratio << ","
-            << b.minmax_vol_ratio << ","
-            << r.d_b << ","
-            << std::setprecision(4)
-            << b.start_price << "," << b.end_price << "," << b.peak_price << ","
-            << r.close_mid << ","
-            << r.mid_1m << "," << r.mid_3m << ","
-            << r.mid_5m << "," << r.mid_10m << ","
-            << std::setprecision(6)
-            << m.spread << ","
-            << m.bid_vol_best << "," << m.ask_vol_best << ","
-            << m.bid_depth_5 << "," << m.ask_depth_5 << ","
-            << std::setprecision(6) << m.book_imbalance << ","
-            << std::setprecision(8) << m.volatility_60s << ","
-            << m.momentum_5s << "," << m.momentum_30s << "," << m.momentum_60s << ","
-            << m.trade_count_5m << "," << m.trade_volume_5m
-            << "\n";
-    }
+    out.flush();
     out.close();
 
-    std::cout << "\nTotal bursts across all days: " << all_records.size() << "\n";
+    auto t1 = std::chrono::steady_clock::now();
+    double elapsed_sec = std::chrono::duration<double>(t1 - t0).count();
+
+    size_t total_kept = 0;
+    for (const auto& d : day_results) total_kept += d.burst_kept;
+    std::cout << "\nTotal bursts across all days: " << total_kept << "\n";
+    std::cout << "Elapsed seconds: " << std::fixed << std::setprecision(1) << elapsed_sec << "\n";
     std::cout << "Output: '" << output_file << "'\n";
 
     return 0;
