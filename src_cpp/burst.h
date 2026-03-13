@@ -12,6 +12,13 @@ struct Burst {
     int direction;      // 1=Buy, -1=Sell, 0=Mixed (didn't meet direction threshold)
     int volume;         // Total shares traded/added
     int trade_count;    // Number of orders in the burst
+    int buy_count;      // Buy-initiated trade count in burst
+    int sell_count;     // Sell-initiated trade count in burst
+    int buy_volume;     // Buy-initiated volume in burst
+    int sell_volume;    // Sell-initiated volume in burst
+    double buy_ratio;   // buy_count / trade_count
+    double sell_ratio;  // sell_count / trade_count
+    double minmax_vol_ratio; // min(buy_volume,sell_volume)/max(...)
     double start_price; // Price BEFORE the burst started
     double end_price;   // Price AFTER the burst ended
     double peak_price;  // The most extreme price reached during the burst

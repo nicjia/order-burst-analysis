@@ -1427,8 +1427,9 @@ def main():
     print("Engineering features …")
     df = engineer_features(df)
 
-    # Drop NaN targets
-    target_cols = list(set(v[0] for v in TARGET_MAP.values()))
+    # Drop NaNs only for columns required by the requested targets.
+    # Using all target columns can over-drop rows unnecessarily.
+    target_cols = sorted({TARGET_MAP[k][0] for k in target_keys if k in TARGET_MAP})
     valid_mask = df[target_cols].notna().all(axis=1)
     df = df[valid_mask].reset_index(drop=True)
     print(f"  {len(df):,} bursts after dropping missing targets")

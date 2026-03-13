@@ -37,6 +37,15 @@ void BurstDetector::classify_direction() {
     
     double buy_ratio = (double)buy_count_ / total;
     double sell_ratio = (double)sell_count_ / total;
+    current_burst_.buy_count = buy_count_;
+    current_burst_.sell_count = sell_count_;
+    current_burst_.buy_volume = buy_volume_;
+    current_burst_.sell_volume = sell_volume_;
+    current_burst_.buy_ratio = buy_ratio;
+    current_burst_.sell_ratio = sell_ratio;
+    double major_vol = std::max((double)buy_volume_, (double)sell_volume_);
+    double minor_vol = std::min((double)buy_volume_, (double)sell_volume_);
+    current_burst_.minmax_vol_ratio = (major_vol > 0.0) ? (minor_vol / major_vol) : 1.0;
     
     if (buy_ratio >= direction_threshold_) {
         // Count says Buy – verify volume doesn't contradict
@@ -163,6 +172,13 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
         current_burst_.direction = 0;
         current_burst_.volume = 0;
         current_burst_.trade_count = 0;
+        current_burst_.buy_count = 0;
+        current_burst_.sell_count = 0;
+        current_burst_.buy_volume = 0;
+        current_burst_.sell_volume = 0;
+        current_burst_.buy_ratio = 0.0;
+        current_burst_.sell_ratio = 0.0;
+        current_burst_.minmax_vol_ratio = 1.0;
         
         // last_mid_price_ is now the price from the most recent message 
         // (even if it was a quote update 1ms ago), so this is accurate.

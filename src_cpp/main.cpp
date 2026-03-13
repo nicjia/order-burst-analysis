@@ -446,7 +446,8 @@ int main(int argc, char* argv[]) {
 
     // ── Write output CSV ────────────────────────────────────
     std::ofstream out(output_file);
-    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,D_b,"
+    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
+        << "BuyCount,SellCount,BuyVolume,SellVolume,BuyRatio,SellRatio,MinMaxVolRatio,D_b,"
         << "StartPrice,EndPrice,PeakPrice,CloseMid,"
         << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
         << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
@@ -462,6 +463,10 @@ int main(int argc, char* argv[]) {
             << b.start_time << "," << b.end_time << ","
             << b.direction << "," << b.volume << ","
             << b.trade_count << ","
+            << b.buy_count << "," << b.sell_count << ","
+            << b.buy_volume << "," << b.sell_volume << ","
+            << b.buy_ratio << "," << b.sell_ratio << ","
+            << b.minmax_vol_ratio << ","
             << r.d_b << ","
             << std::setprecision(4)
             << b.start_price << "," << b.end_price << "," << b.peak_price << ","
