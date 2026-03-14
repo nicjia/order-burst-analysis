@@ -145,6 +145,9 @@ HAS_CB = False
 SEED = 42
 np.random.seed(SEED)
 
+# Runtime-focused defaults for very large datasets.
+OPTUNA_TRIALS = 12
+
 
 # ═════════════════════════════════════════════════════════════════
 # MODEL REGISTRY
@@ -312,19 +315,25 @@ def engineer_features(df):
     df['Impact_qrank'] = 0.5
     df['Db_qrank']     = 0.5
 
+    import bisect
     for _, day_df in df.groupby('Date'):
         idx = day_df.index
         n = len(idx)
         if n < 2:
             continue
-        # expanding rank — rank of each value vs all prior values
+
+        # O(N log N) online rank: compare each point against sorted past values.
         for col, qcol in [('BurstVolume', 'Volume_qrank'),
                           ('PeakImpact', 'Impact_qrank'),
                           ('D_b', 'Db_qrank')]:
             vals = day_df[col].values
             ranks = np.zeros(n)
-            for i in range(1, n):
-                ranks[i] = (vals[:i] < vals[i]).sum() / i
+            past_vals = []
+            for i in range(n):
+                v = vals[i]
+                pos = bisect.bisect_left(past_vals, v)
+                ranks[i] = (pos / i) if i > 0 else 0.5
+                bisect.insort(past_vals, v)
             df.loc[idx, qcol] = ranks
 
     # ── Cross-burst features (rolling 5-min window) ──────────
@@ -462,10 +471,23 @@ def _needs_scaling(model_key):
 def _needs_subsample(model_key):
     """Models that are too slow for full data — subsample training set."""
     LIMITS = {
-        'svm_rbf': 50_000,
-        'knn': 200_000,
+        'svm_rbf': 30_000,
+        'knn': 80_000,
         'knn_reg': 200_000,
         'svr_linear': 100_000,
+        'mlp_small': 200_000,
+        'mlp_large': 120_000,
+        'rf': 250_000,
+        'et': 250_000,
+        'adaboost': 250_000,
+        'histgbt': 300_000,
+        'lgb': 350_000,
+        'xgb': 300_000,
+        'lgb_tuned': 200_000,
+        'xgb_tuned': 150_000,
+        'stacking': 120_000,
+        'voting': 150_000,
+        'lgb_calibrated': 150_000,
     }
     return LIMITS.get(model_key, None)
 
@@ -487,10 +509,10 @@ def build_classifier(model_key, n_features, n_train):
 
     elif model_key == 'xgb' and HAS_XGB:
         return xgb.XGBClassifier(
-            n_estimators=1000, max_depth=7, learning_rate=0.05,
+            n_estimators=400, max_depth=7, learning_rate=0.05,
             subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1,
             reg_lambda=1.0, eval_metric='auc', use_label_encoder=False,
-            early_stopping_rounds=50, verbosity=0, random_state=SEED,
+            early_stopping_rounds=30, verbosity=0, random_state=SEED,
             n_jobs=-1, tree_method='hist',
         )
 
@@ -499,28 +521,28 @@ def build_classifier(model_key, n_features, n_train):
 
     elif model_key == 'histgbt':
         return HistGradientBoostingClassifier(
-            max_iter=500, max_depth=7, learning_rate=0.05,
+            max_iter=250, max_depth=7, learning_rate=0.05,
             min_samples_leaf=200, max_leaf_nodes=63,
             l2_regularization=1.0, random_state=SEED,
-            early_stopping=True, n_iter_no_change=50,
+            early_stopping=True, n_iter_no_change=25,
             validation_fraction=0.1,
         )
 
     elif model_key == 'rf':
         return RandomForestClassifier(
-            n_estimators=500, max_depth=12, min_samples_leaf=100,
+            n_estimators=220, max_depth=12, min_samples_leaf=100,
             max_features='sqrt', random_state=SEED, n_jobs=-1,
         )
 
     elif model_key == 'et':
         return ExtraTreesClassifier(
-            n_estimators=500, max_depth=12, min_samples_leaf=100,
+            n_estimators=220, max_depth=12, min_samples_leaf=100,
             max_features='sqrt', random_state=SEED, n_jobs=-1,
         )
 
     elif model_key == 'adaboost':
         return AdaBoostClassifier(
-            n_estimators=200, learning_rate=0.1, random_state=SEED,
+            n_estimators=120, learning_rate=0.1, random_state=SEED,
         )
 
     elif model_key == 'logreg_l2':
@@ -562,7 +584,7 @@ def build_classifier(model_key, n_features, n_train):
     elif model_key == 'svm_rbf':
         return SVC(
             C=1.0, kernel='rbf', gamma='scale', probability=True,
-            random_state=SEED, max_iter=5000,
+            random_state=SEED, max_iter=2500,
         )
 
     elif model_key == 'mlp_small':
@@ -570,7 +592,7 @@ def build_classifier(model_key, n_features, n_train):
             hidden_layer_sizes=(256, 128), activation='relu',
             solver='adam', alpha=1e-4, batch_size=1024,
             learning_rate='adaptive', learning_rate_init=1e-3,
-            max_iter=200, early_stopping=True, n_iter_no_change=20,
+            max_iter=100, early_stopping=True, n_iter_no_change=10,
             validation_fraction=0.1, random_state=SEED,
         )
 
@@ -579,7 +601,7 @@ def build_classifier(model_key, n_features, n_train):
             hidden_layer_sizes=(512, 256, 128), activation='relu',
             solver='adam', alpha=1e-4, batch_size=2048,
             learning_rate='adaptive', learning_rate_init=1e-3,
-            max_iter=300, early_stopping=True, n_iter_no_change=20,
+            max_iter=140, early_stopping=True, n_iter_no_change=10,
             validation_fraction=0.1, random_state=SEED,
         )
 
@@ -587,19 +609,19 @@ def build_classifier(model_key, n_features, n_train):
         return StackingClassifier(
             estimators=[
                 ('lgb', HistGradientBoostingClassifier(
-                    max_iter=300, max_depth=6, learning_rate=0.05,
-                    random_state=SEED, early_stopping=True, n_iter_no_change=30,
+                    max_iter=140, max_depth=6, learning_rate=0.05,
+                    random_state=SEED, early_stopping=True, n_iter_no_change=15,
                     validation_fraction=0.1)),
                 ('xgb', xgb.XGBClassifier(
-                    n_estimators=300, max_depth=6, learning_rate=0.05,
+                    n_estimators=160, max_depth=6, learning_rate=0.05,
                     eval_metric='auc', use_label_encoder=False,
                     verbosity=0, random_state=SEED, n_jobs=-1,
                     tree_method='hist')),
                 ('rf', RandomForestClassifier(
-                    n_estimators=200, max_depth=10, min_samples_leaf=100,
+                    n_estimators=120, max_depth=10, min_samples_leaf=100,
                     random_state=SEED, n_jobs=-1)),
             ],
-            final_estimator=LogisticRegression(C=1.0, max_iter=500),
+            final_estimator=LogisticRegression(C=1.0, max_iter=300),
             cv=3, n_jobs=-1, passthrough=False,
         )
 
@@ -607,16 +629,16 @@ def build_classifier(model_key, n_features, n_train):
         return VotingClassifier(
             estimators=[
                 ('lgb', HistGradientBoostingClassifier(
-                    max_iter=300, max_depth=6, learning_rate=0.05,
-                    random_state=SEED, early_stopping=True, n_iter_no_change=30,
+                    max_iter=140, max_depth=6, learning_rate=0.05,
+                    random_state=SEED, early_stopping=True, n_iter_no_change=15,
                     validation_fraction=0.1)),
                 ('xgb', xgb.XGBClassifier(
-                    n_estimators=300, max_depth=6, learning_rate=0.05,
+                    n_estimators=160, max_depth=6, learning_rate=0.05,
                     eval_metric='auc', use_label_encoder=False,
                     verbosity=0, random_state=SEED, n_jobs=-1,
                     tree_method='hist')),
                 ('rf', RandomForestClassifier(
-                    n_estimators=200, max_depth=10, min_samples_leaf=100,
+                    n_estimators=120, max_depth=10, min_samples_leaf=100,
                     random_state=SEED, n_jobs=-1)),
             ],
             voting='soft', n_jobs=-1,
@@ -628,12 +650,12 @@ def build_classifier(model_key, n_features, n_train):
     elif model_key == 'lgb_calibrated' and HAS_LGB:
         return CalibratedClassifierCV(
             lgb.LGBMClassifier(
-                n_estimators=500, max_depth=7, learning_rate=0.05,
+                n_estimators=240, max_depth=7, learning_rate=0.05,
                 num_leaves=63, min_child_samples=200, subsample=0.8,
                 colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0,
                 verbose=-1, random_state=SEED, n_jobs=-1,
             ),
-            cv=3, method='isotonic',
+            cv=2, method='sigmoid',
         )
 
     else:
@@ -738,7 +760,7 @@ class _LGBWrapper:
             valid_sets.append(dval)
             callbacks.append(lgb.early_stopping(50, verbose=False))
         self.model = lgb.train(
-            self.params, dtrain, num_boost_round=1000,
+            self.params, dtrain, num_boost_round=500,
             valid_sets=valid_sets, callbacks=callbacks)
         return self
 
@@ -817,15 +839,15 @@ class _LGBTunedWrapper:
             dtrain = lgb.Dataset(X_train, label=y_train)
             dval = lgb.Dataset(X_val, label=y_val, reference=dtrain)
             model = lgb.train(
-                params, dtrain, num_boost_round=500,
+                params, dtrain, num_boost_round=250,
                 valid_sets=[dval],
-                callbacks=[lgb.early_stopping(30, verbose=False)])
+                callbacks=[lgb.early_stopping(20, verbose=False)])
             preds = model.predict(X_val)
             return self._score(y_val, preds, n_classes)
 
         study = optuna.create_study(
             direction='maximize', sampler=optuna.samplers.TPESampler(seed=SEED))
-        study.optimize(objective, n_trials=50, show_progress_bar=False)
+        study.optimize(objective, n_trials=OPTUNA_TRIALS, show_progress_bar=False)
         self.best_params = study.best_params
 
         # Retrain with best params
@@ -844,9 +866,9 @@ class _LGBTunedWrapper:
         dtrain = lgb.Dataset(X_train, label=y_train)
         dval = lgb.Dataset(X_val, label=y_val, reference=dtrain)
         self.model = lgb.train(
-            best_p, dtrain, num_boost_round=1000,
+            best_p, dtrain, num_boost_round=500,
             valid_sets=[dval],
-            callbacks=[lgb.early_stopping(50, verbose=False)])
+            callbacks=[lgb.early_stopping(25, verbose=False)])
         return self
 
     def predict_proba(self, X):
@@ -871,14 +893,14 @@ class _XGBTunedWrapper:
     def fit(self, X_train, y_train, X_val=None, y_val=None):
         if X_val is None or not HAS_OPTUNA:
             self.model = xgb.XGBClassifier(
-                n_estimators=500, max_depth=7, learning_rate=0.05,
+                n_estimators=250, max_depth=7, learning_rate=0.05,
                 verbosity=0, random_state=SEED, n_jobs=-1, tree_method='hist')
             self.model.fit(X_train, y_train)
             return self
 
         def objective(trial):
             params = {
-                'n_estimators': 500,
+                'n_estimators': 250,
                 'learning_rate': trial.suggest_float('lr', 0.01, 0.3, log=True),
                 'max_depth': trial.suggest_int('max_depth', 3, 12),
                 'subsample': trial.suggest_float('subsample', 0.5, 1.0),
@@ -890,7 +912,7 @@ class _XGBTunedWrapper:
             }
             model = xgb.XGBClassifier(
                 **params, eval_metric='auc', use_label_encoder=False,
-                early_stopping_rounds=30, verbosity=0, random_state=SEED,
+                early_stopping_rounds=20, verbosity=0, random_state=SEED,
                 n_jobs=-1, tree_method='hist')
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
             preds = model.predict_proba(X_val)[:, 1]
@@ -898,11 +920,11 @@ class _XGBTunedWrapper:
 
         study = optuna.create_study(
             direction='maximize', sampler=optuna.samplers.TPESampler(seed=SEED))
-        study.optimize(objective, n_trials=50, show_progress_bar=False)
+        study.optimize(objective, n_trials=OPTUNA_TRIALS, show_progress_bar=False)
         self.best_params = study.best_params
 
         self.model = xgb.XGBClassifier(
-            n_estimators=1000,
+            n_estimators=400,
             learning_rate=self.best_params['lr'],
             max_depth=self.best_params['max_depth'],
             subsample=self.best_params['subsample'],
@@ -912,7 +934,7 @@ class _XGBTunedWrapper:
             min_child_weight=self.best_params['min_child_weight'],
             gamma=self.best_params['gamma'],
             eval_metric='auc', use_label_encoder=False,
-            early_stopping_rounds=50, verbosity=0,
+            early_stopping_rounds=25, verbosity=0,
             random_state=SEED, n_jobs=-1, tree_method='hist')
         self.model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
         return self

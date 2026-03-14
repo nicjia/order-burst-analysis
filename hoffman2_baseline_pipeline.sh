@@ -4,7 +4,7 @@
 #$ -o /u/scratch/n/nicjia/order-burst-analysis/logs/selection_pipeline_$JOB_ID.out
 #$ -l h_data=8G,h_rt=12:00:00
 #$ -pe shared 8
-#$ -N nvda_selection_phase
+#$ -N nvda_selection_resume
 
 set -Eeo pipefail
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
@@ -40,10 +40,22 @@ KAPPA_VALUES=${KAPPA_VALUES:-0.2,0.5,1.0}
 mkdir -p "${ROOT}/logs" "${ROOT}/results"
 cd "${ROOT}"
 
-# --- Environment ---
-. /u/local/Modules/default/init/bash
+# --- TEMPORARILY DISABLE STRICT ERROR HANDLING FOR SYSTEM SCRIPTS ---
+set +Eeo pipefail
+trap - ERR
+
+if [ -f /u/local/Modules/default/init/bash ]; then
+  . /u/local/Modules/default/init/bash
+elif [ -f /etc/profile.d/modules.sh ]; then
+  . /etc/profile.d/modules.sh
+fi
+
 module load gcc/11.3.0 python/3.9.6
 source "${ROOT}/.venv/bin/activate"
+
+# --- RE-ENABLE STRICT ERROR HANDLING ---
+set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 stage_time() {
   local stage_name="$1"
@@ -57,7 +69,7 @@ stage_time() {
   echo "---- ${stage_name} END:   $(date '+%F %T') (${dt}s) ----"
 }
 
-echo "========== SELECTION PIPELINE START =========="
+echo "========== SELECTION PIPELINE RESUME START =========="
 echo "Job ID: ${JOB_ID:-N/A}"
 echo "Host: $(hostname)"
 echo "Start: $(date '+%F %T')"
@@ -72,25 +84,30 @@ echo "Sweep target: ${SWEEP_TARGET}"
 echo "Sweep silence: ${SILENCE_VALUES}"
 echo "=============================================="
 
-if [ ! -f "${BURSTS_CSV}" ]; then
-  stage_time "DATA_PROCESSOR_BASELINE" \
-    ./data_processor "${ROOT}/data/${TICKER}" "${BURSTS_CSV}" \
-    -s 1.0 -v 1 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
-fi
+# ==========================================================
+# SKIPPING COMPLETED STAGES
+# ==========================================================
+# if [ ! -f "${BURSTS_CSV}" ]; then
+#   stage_time "DATA_PROCESSOR_BASELINE" \
+#     ./data_processor "${ROOT}/data/${TICKER}" "${BURSTS_CSV}" \
+#     -s 1.0 -v 1 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
+# fi
+# 
+# if [ ! -f "${MASTER_FILTERED_CSV}" ]; then
+#   stage_time "MASTER_PERMANENCE_K0" \
+#     python "${ROOT}/src_py/compute_permanence.py" \
+#     "${BURSTS_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa 0
+# fi
+# 
+# stage_time "PREPARE_ZOO_INPUT_COPY" cp "${BURSTS_CSV}" "${ZOO_INPUT_CSV}"
+# 
+# stage_time "PREPARE_ZOO_DATA" \
+#   python "${ROOT}/src_py/compute_permanence.py" \
+#   "${ZOO_INPUT_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" \
+#   --kappa "${KAPPA_ZOO}"
+# ==========================================================
 
-if [ ! -f "${MASTER_FILTERED_CSV}" ]; then
-  stage_time "MASTER_PERMANENCE_K0" \
-    python "${ROOT}/src_py/compute_permanence.py" \
-    "${BURSTS_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa 0
-fi
-
-# --- STEP 1: GENERATE ZOO BASELINE (Kappa=0.5) ---
-stage_time "PREPARE_ZOO_INPUT_COPY" cp "${BURSTS_CSV}" "${ZOO_INPUT_CSV}"
-
-stage_time "PREPARE_ZOO_DATA" \
-  python "${ROOT}/src_py/compute_permanence.py" \
-  "${ZOO_INPUT_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" \
-  --kappa "${KAPPA_ZOO}"
+echo -e "\nSkipped Data Processor and Permanence steps. Resuming at MODEL_ZOO..."
 
 if [ ! -f "${ZOO_TEMP_CSV}" ]; then
   echo "ERROR: expected zoo input file not found: ${ZOO_TEMP_CSV}" >&2
@@ -99,14 +116,14 @@ fi
 
 # --- STEP 2: THE MODEL ZOO ---
 stage_time "MODEL_ZOO" \
-  python "${ROOT}/src_py/train_model_zoo.py" \
+  python -u "${ROOT}/src_py/train_model_zoo.py" \
   "${ZOO_TEMP_CSV}" --model "${MODEL_KEY}" --target "${TARGET_KEY}" \
   --features extended --outdir "${ZOO_OUTDIR}"
 
 # --- STEP 3: THE SWEEP ---
 if [ "${RUN_SWEEP}" = "1" ] && [ "${SWEEP_MODEL}" != "PENDING" ] && [ "${SWEEP_TARGET}" != "PENDING" ]; then
   stage_time "SILENCE_SWEEP" \
-    python "${ROOT}/src_py/silence_optimized_sweep.py" \
+    python -u "${ROOT}/src_py/silence_optimized_sweep.py" \
     --stock-folder "${ROOT}/data/${TICKER}" \
     --ticker "${TICKER}" \
     --open "${ROOT}/open_all.csv" \
@@ -131,13 +148,9 @@ else
   echo "Set RUN_SWEEP=1 and provide SWEEP_MODEL/SWEEP_TARGET to start sweep phase."
 fi
 
-# Cleanup the Zoo temp file to save space
-# rm "${ZOO_TEMP_CSV}"
-
-echo "\n========== SELECTION PIPELINE DONE =========="
+echo -e "\n========== SELECTION PIPELINE DONE =========="
 echo "End: $(date '+%F %T')"
 echo "Master bursts: ${BURSTS_CSV}"
-echo "Master filtered (kappa=0): ${MASTER_FILTERED_CSV}"
 echo "Zoo input filtered (kappa=${KAPPA_ZOO}): ${ZOO_TEMP_CSV}"
 echo "Zoo output: ${ZOO_OUTDIR}"
 echo "Sweep output: ${SWEEP_OUTDIR}"
