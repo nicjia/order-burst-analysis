@@ -107,13 +107,17 @@ def main():
     ap.add_argument("--rth-end", type=float, default=57600.0, help="Fixed -e")
 
     ap.add_argument("--model", default="logreg_l2", help="train_model_zoo --model")
-    ap.add_argument("--target", default="cls_close", help="train_model_zoo --target")
+    ap.add_argument("--target", default="cls_close",
+                    help="Comma-separated target keys for train_model_zoo --target, e.g. cls_1m,cls_5m,cls_close")
     ap.add_argument("--features", default="extended", choices=["base", "extended"])
     ap.add_argument("--min-train-months", type=int, default=3)
     ap.add_argument("--require-directional", action="store_true", help="Drop mixed bursts after post-classification")
     ap.add_argument("--min-rows", type=int, default=500, help="Skip configs with too few bursts")
 
     args = ap.parse_args()
+    target_list = [t.strip() for t in args.target.split(",") if t.strip()]
+    if not target_list:
+        raise ValueError("No valid targets provided via --target")
 
     silence_values = parse_float_list(args.silence_values)
     min_vol_values = parse_int_list(args.min_vol_values)
@@ -202,32 +206,49 @@ def main():
                 "python3", "src_py/train_model_zoo.py",
                 str(candidate_csv),
                 "--model", args.model,
-                "--target", args.target,
+                "--target", ",".join(target_list),
                 "--features", args.features,
                 "--outdir", str(out_model_dir),
                 "--min-train-months", str(args.min_train_months),
             ])
 
-            result_json = out_model_dir / f"{args.model}__{args.target}.json"
-            metric_name, metric_value = find_score(result_json)
+            for tgt in target_list:
+                result_json = out_model_dir / f"{args.model}__{tgt}.json"
+                if not result_json.exists():
+                    summary_rows.append({
+                        "ticker": args.ticker,
+                        "config": config_tag,
+                        "target": tgt,
+                        "silence": s,
+                        "min_vol": min_vol,
+                        "dir_thresh": dth,
+                        "vol_ratio": vr,
+                        "kappa": k,
+                        "rows": len(filtered),
+                        "metric_name": "MISSING",
+                        "metric_value": "",
+                    })
+                    continue
 
-            summary_rows.append({
-                "ticker": args.ticker,
-                "config": config_tag,
-                "silence": s,
-                "min_vol": min_vol,
-                "dir_thresh": dth,
-                "vol_ratio": vr,
-                "kappa": k,
-                "rows": len(filtered),
-                "metric_name": metric_name,
-                "metric_value": metric_value,
-            })
+                metric_name, metric_value = find_score(result_json)
+                summary_rows.append({
+                    "ticker": args.ticker,
+                    "config": config_tag,
+                    "target": tgt,
+                    "silence": s,
+                    "min_vol": min_vol,
+                    "dir_thresh": dth,
+                    "vol_ratio": vr,
+                    "kappa": k,
+                    "rows": len(filtered),
+                    "metric_name": metric_name,
+                    "metric_value": metric_value,
+                })
 
     summary_csv = outdir / "sweep_summary.csv"
     with open(summary_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(summary_rows[0].keys()) if summary_rows else [
-            "ticker", "config", "silence", "min_vol", "dir_thresh", "vol_ratio", "kappa", "rows", "metric_name", "metric_value"
+            "ticker", "config", "target", "silence", "min_vol", "dir_thresh", "vol_ratio", "kappa", "rows", "metric_name", "metric_value"
         ])
         writer.writeheader()
         writer.writerows(summary_rows)
@@ -246,22 +267,26 @@ def main():
         pd.DataFrame(ranked).to_csv(ranked_csv, index=False)
 
         # Plot top configurations for quick visual comparison.
-        top_n = min(25, len(ranked))
-        top_df = pd.DataFrame(ranked[:top_n]).copy()
-        plt.figure(figsize=(14, 6))
-        plt.bar(top_df["config"], top_df["metric_value"])
-        plt.xticks(rotation=75, ha="right", fontsize=8)
-        plt.ylabel(metric_name)
-        plt.title(f"Top {top_n} parameter combinations ({metric_name})")
-        plt.tight_layout()
-        chart_path = outdir / "top_configs.png"
-        plt.savefig(chart_path, dpi=140)
-        plt.close()
+        # Chart top rows for the first target in the requested list.
+        chart_target = target_list[0]
+        target_ranked = [r for r in ranked if r.get("target") == chart_target]
+        top_n = min(25, len(target_ranked))
+        top_df = pd.DataFrame(target_ranked[:top_n]).copy() if top_n > 0 else pd.DataFrame()
+        if top_n > 0:
+            plt.figure(figsize=(14, 6))
+            plt.bar(top_df["config"], top_df["metric_value"])
+            plt.xticks(rotation=75, ha="right", fontsize=8)
+            plt.ylabel(metric_name)
+            plt.title(f"Top {top_n} parameter combinations for {chart_target} ({metric_name})")
+            plt.tight_layout()
+            chart_path = outdir / f"top_configs_{chart_target}.png"
+            plt.savefig(chart_path, dpi=140)
+            plt.close()
+            print(f"Saved: {chart_path}")
 
         print(f"Best config ({metric_name}): {best['config']} -> {best['metric_value']}")
         print(f"Saved: {best_json}")
         print(f"Saved: {ranked_csv}")
-        print(f"Saved: {chart_path}")
 
     print(f"Saved sweep summary: {summary_csv}")
 
