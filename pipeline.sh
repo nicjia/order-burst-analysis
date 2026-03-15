@@ -4,13 +4,13 @@
 #$ -o /u/scratch/n/nicjia/order-burst-analysis/logs/selection_pipeline_$JOB_ID.out
 #$ -l h_data=8G,h_rt=12:00:00
 #$ -pe shared 8
-#$ -N nvda_sweep_phase
+#$ -N tsla_sweep_phase
 
 set -Eeo pipefail
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
-TICKER=${TICKER:-NVDA}
+TICKER=${TICKER:-TSLA}
 WORKERS=${NSLOTS:-1}
 
 # --- FILES ---

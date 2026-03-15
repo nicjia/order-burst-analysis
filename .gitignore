@@ -1,11 +1,11 @@
-*.csv
+Yearly/**/*.csv
+Yearly/*.csv
+yearly-clop/**/*.csv
+yearly-clop/*.csv
 *.exe
 __pycache__/
 .env
 .DS_Store
-*.data
-*.csv.gz
-/NVDA_Results/
 ############################################################
 # Model zoo results: ignore all JSON and PNG except key docs
 ############################################################
@@ -14,17 +14,54 @@ model_zoo_results/*.png
 !model_zoo_results/leaderboard.md
 !model_zoo_results/MODEL_ZOO_REPORT.md
 
-# Results/plots: ignore PNGs, keep important docs
-results/**/*.png
+data/
+*.data
+*.csv.gz
+/NVDA_Results/
 
-# Results: ignore metrics.json, keep code and docs
+# --- Results and Params ---
+# Ignore all JSONs in results subfolders (per-model/config outputs)
+results/**/adaboost__*.json
+results/**/et__*.json
+results/**/histgbt__*.json
+results/**/knn__*.json
+results/**/lgb__*.json
+results/**/lgb_calibrated__*.json
+results/**/lgb_tuned__*.json
+results/**/logreg_en__*.json
+results/**/logreg_l1__*.json
+results/**/logreg_l2__*.json
+results/**/mlp_large__*.json
+results/**/mlp_small__*.json
+results/**/naive_bayes__*.json
+results/**/rf__*.json
+results/**/ridge_cls__*.json
+results/**/sgd_hinge__*.json
+results/**/stacking__*.json
+results/**/svm_rbf__*.json
+results/**/voting__*.json
+results/**/xgb__*.json
+results/**/xgb_tuned__*.json
+
+# Allow summary/leaderboard markdowns and summary metrics
+!results/**/leaderboard.md
+!results/**/MODEL_ZOO_REPORT.md
+!results/**/sweep_summary.csv
+!results/**/auc_comparison.png
+!results/**/monthly_auc_heatmap.png
+!results/**/best_config.json
+
+# Ignore all other PNGs except summary plots
+results/**/*.png
+!results/**/auc_comparison.png
+!results/**/monthly_auc_heatmap.png
+
+# Ignore metrics.json but allow other summary metrics
 results/**/metrics.json
 
-# Allow manual override: if you want to keep a file, remove from .gitignore
-
-results/zoo_bursts_NVDA_filtered/*.json
-results/zoo_bursts_NVDA_filtered/*.png
-!results/zoo_bursts_NVDA_filtered/leaderboard.md
-!results/zoo_bursts_NVDA_filtered/MODEL_ZOO_REPORT.md
-
 data/
+
+close_all.csv
+OPCL_all.csv
+pvCLCL_all.csv
+open_all.csv

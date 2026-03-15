@@ -1,0 +1,13 @@
+{
+  "ticker": "NVDA",
+  "config": "s2p0_v2000_d0p7_r0p5_k0p2",
+  "target": "cls_1m",
+  "silence": 2.0,
+  "min_vol": 2000,
+  "dir_thresh": 0.7,
+  "vol_ratio": 0.5,
+  "kappa": 0.2,
+  "rows": 68090,
+  "metric_name": "AUC",
+  "metric_value": 0.6693155336103792
+}
