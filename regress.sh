@@ -1,10 +1,9 @@
 #!/bin/bash
 #$ -cwd
 #$ -j y
-#$ -o /u/scratch/n/nicjia/order-burst-analysis/logs/diverse_reg_$JOB_ID.out
+#$ -o logs/$JOB_ID.out
 #$ -l h_data=16G,h_rt=12:00:00
 #$ -pe shared 8
-#$ -N diverse_regression
 
 set -Eeo pipefail
 
@@ -50,15 +49,15 @@ for TICKER in NVDA TSLA JPM MS; do
 
         echo "Running Config: ${CNAME}"
         
-        # 1. C++ Processor
+        # 1. C++ Processor (Forced to keep everything so Python can split targets)
         ./data_processor "${ROOT}/data/${TICKER}" "${OUT_CSV}" \
-          ${CARGS} -k ${KVAL} -t 10.0 -j 8 -b 34200 -e 57600
+          ${CARGS} -k 0 -t 10.0 -j 8 -b 34200 -e 57600
         
-        # 2. Python Permanence (Attach Returns)
-        python src_py/compute_permanence.py "${OUT_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa ${KVAL}
+        # 2. Python Permanence (Attach Returns, keep everything)
+        python src_py/compute_permanence.py "${OUT_CSV}" "${ROOT}/open_all.csv" "${ROOT}/close_all.csv" --kappa 0
         
-        # 3. XGBoost Regression
-        python src_py/regression_eval.py --ticker "${TICKER}" --data "${FILTERED_CSV}" --config "${CNAME}"
+        # 3. XGBoost Regression (Pass KVAL to Python to handle the logic)
+        python src_py/regression_eval.py --ticker "${TICKER}" --data "${FILTERED_CSV}" --config "${CNAME}" --kappa "${KVAL}"
     done
 done
 
