@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import xgboost as xgb
+from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.linear_model import Ridge, ElasticNet
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score
 import argparse
 import os
@@ -63,86 +66,81 @@ targets = ['Perm_t1m', 'Perm_t3m', 'Perm_t5m', 'Perm_t10m', 'Perm_tCLOSE', 'Perm
 results = []
 print(f"Training Regressors for {args.ticker} -> {args.config} (kappa={args.kappa})")
 
+# 4. DEFINE THE MODEL ZOO
+models = {
+    'XGB_Restricted': xgb.XGBRegressor(n_estimators=100, learning_rate=0.01, max_depth=2, subsample=0.8, colsample_bytree=0.8, reg_lambda=10.0, reg_alpha=10.0, tree_method='hist', random_state=42),
+    'HistGB_Restricted': HistGradientBoostingRegressor(max_iter=100, learning_rate=0.01, max_depth=2, l2_regularization=10.0, random_state=42),
+    'Ridge': Ridge(alpha=100.0, random_state=42),
+    'ElasticNet': ElasticNet(alpha=0.1, l1_ratio=0.5, random_state=42),
+    'RandomForest_Shallow': RandomForestRegressor(n_estimators=100, max_depth=4, min_samples_leaf=100, random_state=42, n_jobs=-1)
+}
+
 for target in targets:
     if target not in df.columns:
         continue
 
     # DYNAMIC FILTERING & FEATURE SELECTION
     if target in ['Perm_tCLOSE', 'Perm_CLOP', 'Perm_CLCL']:
-        # For long horizons, apply the D_b kappa filter to the dataset
         tr_filter_mask = (train_df_base['D_b'] >= args.kappa) & train_df_base['D_b'].notna()
         te_filter_mask = (test_df_base['D_b'] >= args.kappa) & test_df_base['D_b'].notna()
-        
         train_df = train_df_base[tr_filter_mask].copy()
         test_df = test_df_base[te_filter_mask].copy()
-        
-        # It is safe to use D_b as a feature for long horizons
         valid_features = [f for f in BASE_FEATURES if f in df.columns] + ['D_b']
     else:
-        # For intraday horizons, use ALL bursts (kappa=0)
         train_df = train_df_base.copy()
         test_df = test_df_base.copy()
-        
-        # D_b is strictly forbidden as a feature here to prevent look-ahead bias
         valid_features = [f for f in BASE_FEATURES if f in df.columns]
         
-    # CLEANING: Drop rows with NaN targets
     tr_mask, te_mask = train_df[target].notna(), test_df[target].notna()
     if tr_mask.sum() == 0 or te_mask.sum() == 0:
         continue
 
     y_train = train_df.loc[tr_mask, target].copy()
     y_test = test_df.loc[te_mask, target].copy()
-    X_train = train_df.loc[tr_mask, valid_features]
-    X_test = test_df.loc[te_mask, valid_features]
+    X_train_raw = train_df.loc[tr_mask, valid_features]
+    X_test_raw = test_df.loc[te_mask, valid_features]
 
     # WINSORIZING: 1st/99th percentile clipping
     lo, hi = y_train.quantile(0.01), y_train.quantile(0.99)
     y_train = y_train.clip(lower=lo, upper=hi)
     y_test = y_test.clip(lower=lo, upper=hi)
     
-    # TRAIN
-    model = xgb.XGBRegressor(
-        n_estimators=150, learning_rate=0.05, max_depth=5, 
-        tree_method='hist', random_state=42
-    )
-    model.fit(X_train, y_train)
-    
-    # PREDICT
-    train_preds = model.predict(X_train)
-    test_preds = model.predict(X_test)
-    
-    # EVALUATE
-    mae = mean_absolute_error(y_test, test_preds)
-    r2 = r2_score(y_test, test_preds)
-    dir_acc = accuracy_score((y_test > 0).astype(int), (test_preds > 0).astype(int))
-    
-    # PnL SIMULATION (NO LOOK-AHEAD):
-    # Establish the threshold strictly from the training predictions
-    historical_threshold = np.percentile(np.abs(train_preds), 75)
-    
-    # Apply that historical threshold to the unseen test data
-    traded_indices = np.abs(test_preds) > historical_threshold
-    
-    if traded_indices.sum() > 0:
-        captured_perm = y_test.values[traded_indices].mean()
-    else:
-        captured_perm = 0
+    # SCALING (Required for Ridge/ElasticNet)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_raw)
+    X_test = scaler.transform(X_test_raw)
 
-    results.append({
-        'Config': args.config,
-        'Ticker': args.ticker,
-        'Target': target,
-        'R2': round(r2, 4),
-        'MAE': round(mae, 4),
-        'DirAcc': round(dir_acc, 4),
-        'Top25_Avg_Perm': round(captured_perm, 4),
-        'Trades_Taken': traded_indices.sum()
-    })
+    # LOOP OVER MODELS
+    for model_name, model in models.items():
+        model.fit(X_train, y_train)
+        
+        train_preds = model.predict(X_train)
+        test_preds = model.predict(X_test)
+        
+        mae = mean_absolute_error(y_test, test_preds)
+        r2 = r2_score(y_test, test_preds)
+        dir_acc = accuracy_score((y_test > 0).astype(int), (test_preds > 0).astype(int))
+        
+        historical_threshold = np.percentile(np.abs(train_preds), 75)
+        traded_indices = np.abs(test_preds) > historical_threshold
+        
+        captured_perm = y_test.values[traded_indices].mean() if traded_indices.sum() > 0 else 0
+
+        results.append({
+            'Config': args.config,
+            'Ticker': args.ticker,
+            'Model': model_name,
+            'Target': target,
+            'R2': round(r2, 4),
+            'MAE': round(mae, 4),
+            'DirAcc': round(dir_acc, 4),
+            'Top25_Avg_Perm': round(captured_perm, 4),
+            'Trades_Taken': traded_indices.sum()
+        })
 
 if results:
     res_df = pd.DataFrame(results)
-    out_path = 'results/diverse_regression_summary.csv'
+    out_path = 'results/multi_model_regression_summary.csv'
     if os.path.exists(out_path):
         res_df.to_csv(out_path, mode='a', header=False, index=False)
     else:
