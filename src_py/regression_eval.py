@@ -47,7 +47,7 @@ else:
 
 df['LogTradeIntensity'] = np.log1p(df['TradeCount5m']) if 'TradeCount5m' in df.columns else 0.0
 
-# Base allowed features (Notice D_b is intentionally absent here)
+# Base allowed features
 BASE_FEATURES = [
     'Direction', 'BurstVolume', 'TradeCount', 'Duration', 'PeakImpact', 'AvgTradeSize', 
     'PriceChange', 'Spread', 'BidVolBest', 'AskVolBest', 'BidDepth5', 'AskDepth5', 
@@ -61,10 +61,8 @@ df['date_parsed'] = pd.to_datetime(df['Date']).dt.date
 train_df_base = df[df['date_parsed'] < pd.to_datetime('2024-01-01').date()].copy()
 test_df_base = df[df['date_parsed'] >= pd.to_datetime('2024-01-01').date()].copy()
 
-# All requested targets included
 targets = ['Perm_t1m', 'Perm_t3m', 'Perm_t5m', 'Perm_t10m', 'Perm_tCLOSE', 'Perm_CLOP', 'Perm_CLCL']
 results = []
-print(f"Training Regressors for {args.ticker} -> {args.config} (kappa={args.kappa})")
 
 # 4. DEFINE THE MODEL ZOO
 models = {
@@ -100,12 +98,12 @@ for target in targets:
     X_train_raw = train_df.loc[tr_mask, valid_features]
     X_test_raw = test_df.loc[te_mask, valid_features]
 
-    # WINSORIZING: 1st/99th percentile clipping
+    # WINSORIZING
     lo, hi = y_train.quantile(0.01), y_train.quantile(0.99)
     y_train = y_train.clip(lower=lo, upper=hi)
     y_test = y_test.clip(lower=lo, upper=hi)
     
-    # SCALING (Required for Ridge/ElasticNet)
+    # SCALING
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train_raw)
     X_test = scaler.transform(X_test_raw)
@@ -121,8 +119,28 @@ for target in targets:
         r2 = r2_score(y_test, test_preds)
         dir_acc = accuracy_score((y_test > 0).astype(int), (test_preds > 0).astype(int))
         
-        historical_threshold = np.percentile(np.abs(train_preds), 75)
-        traded_indices = np.abs(test_preds) > historical_threshold
+        # Extract the exact dates for every valid prediction
+        pred_dates = pd.to_datetime(np.concatenate([
+            train_df.loc[tr_mask, 'Date'], 
+            test_df.loc[te_mask, 'Date']
+        ]))
+        
+        # Combine absolute predictions and attach the dates as the index
+        all_abs_preds = pd.Series(
+            np.concatenate([np.abs(train_preds), np.abs(test_preds)]), 
+            index=pred_dates
+        )
+        
+        # Calculate a 30-day rolling 75th percentile. 
+        # shift(1) guarantees the threshold uses data STRICTLY BEFORE the current burst.
+        rolling_thresholds = all_abs_preds.rolling('30D', min_periods=1).quantile(0.75).shift(1).bfill()
+        
+        # Extract ONLY the thresholds for the 2024 test data
+        test_thresholds = rolling_thresholds.iloc[len(train_preds):].values
+        
+        # Execute trade if test prediction magnitude beats its 30-day rolling threshold
+        traded_indices = np.abs(test_preds) > test_thresholds
+        # -------------------------------------------
         
         captured_perm = y_test.values[traded_indices].mean() if traded_indices.sum() > 0 else 0
 

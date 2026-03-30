@@ -68,3 +68,4 @@ open_all.csv
 results/
 comp.py
 reg_analysis.py
+*.png
