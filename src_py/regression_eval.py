@@ -18,6 +18,16 @@ args = parser.parse_args()
 # 1. LOAD DATA
 df = pd.read_csv(args.data)
 
+# --- FIX: STRICT CHRONOLOGICAL SORTING ---
+# Ensure dates are parsed and the entire dataframe is strictly sorted
+# to prevent Pandas 'monotonic' errors during rolling window calculations
+df['Date'] = pd.to_datetime(df['Date'])
+if 'StartTime' in df.columns:
+    df = df.sort_values(by=['Date', 'StartTime']).reset_index(drop=True)
+else:
+    df = df.sort_values(by=['Date']).reset_index(drop=True)
+# -----------------------------------------
+
 # 2. FEATURE ENGINEERING
 if 'Volume' in df.columns and 'BurstVolume' not in df.columns:
     df['BurstVolume'] = df['Volume']
@@ -57,7 +67,7 @@ BASE_FEATURES = [
 ]
 
 # 3. WALK-FORWARD SPLIT
-df['date_parsed'] = pd.to_datetime(df['Date']).dt.date
+df['date_parsed'] = df['Date'].dt.date
 train_df_base = df[df['date_parsed'] < pd.to_datetime('2024-01-01').date()].copy()
 test_df_base = df[df['date_parsed'] >= pd.to_datetime('2024-01-01').date()].copy()
 
@@ -119,6 +129,7 @@ for target in targets:
         r2 = r2_score(y_test, test_preds)
         dir_acc = accuracy_score((y_test > 0).astype(int), (test_preds > 0).astype(int))
         
+        # --- NEW DYNAMIC ROLLING THRESHOLD LOGIC ---
         # Extract the exact dates for every valid prediction
         pred_dates = pd.to_datetime(np.concatenate([
             train_df.loc[tr_mask, 'Date'], 
