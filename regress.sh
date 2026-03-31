@@ -8,6 +8,7 @@
 set -Eeo pipefail
 
 # --- DYNAMIC REGIME DATES ---
+# Locked to your currently downloaded LOBSTER data
 TRAIN_START="2023-01-01"
 TEST_START="2024-01-01"
 TEST_END="2024-12-31"
@@ -21,6 +22,7 @@ module load gcc/11.3.0 python/3.9.6
 source "${ROOT}/.venv/bin/activate"
 
 mkdir -p "${ROOT}/logs" "${ROOT}/results"
+# Give the output a new name so we don't accidentally overwrite the old one
 rm -f "${ROOT}/results/multi_model_regression_summary.csv" 
 
 NAMES=(
@@ -54,7 +56,6 @@ for TICKER in NVDA TSLA JPM MS; do
             D_VAL=${PARTS[2]:1} ; D_VAL=${D_VAL//p/.}
             R_VAL=${PARTS[3]:1} ; R_VAL=${R_VAL//p/.}
             
-            # Run C++ executable (assuming raw data is in data/TICKER)
             ./data_processor "${ROOT}/data/${TICKER}" "${FILTERED_CSV}" \
                 -s "${S_VAL}" \
                 -v "${V_VAL}" \
