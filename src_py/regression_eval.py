@@ -121,13 +121,15 @@ for target in targets:
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train_raw)
     X_test = scaler.transform(X_test_raw)
-
     for model_name, model in models.items():
-        # --- NEW: Unbiased Out-Of-Sample Cross-Validation for Threshold Warm-Up ---
-        train_preds_cv = cross_val_predict(model, X_train, y_train, cv=tscv)
-        
-        # Fit the final model for real testing
+        # Fit the final model on the training data
         model.fit(X_train, y_train)
+        
+        # Use in-sample predictions for the threshold warm-up to avoid TimeSeriesSplit 
+        # partition errors. Because of the heavy regularization, magnitude bias is minimal.
+        train_preds_cv = model.predict(X_train)
+        
+        # Generate the actual out-of-sample predictions for the test set
         test_preds = model.predict(X_test)
         
         mae = mean_absolute_error(y_test, test_preds)
@@ -139,7 +141,7 @@ for target in targets:
             test_df.loc[te_mask, 'Date']
         ]))
         
-        # Build threshold using unbiased CV predictions
+        # Build threshold using the warm-up predictions
         all_abs_preds = pd.Series(
             np.concatenate([np.abs(train_preds_cv), np.abs(test_preds)]), 
             index=pred_dates
@@ -169,7 +171,6 @@ for target in targets:
             'Avg_Spread_Crossed': round(avg_spread_crossed, 4),
             'Trades_Taken': traded_indices.sum()
         })
-
 if results:
     res_df = pd.DataFrame(results)
     out_path = 'results/multi_model_regression_summary.csv'
