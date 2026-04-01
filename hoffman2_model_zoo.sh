@@ -28,6 +28,11 @@ module load anaconda3
 # Tickers to evaluate for cross-stock stability.
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 
+# Input filename suffixes for short/long phases.
+# Defaults expect bursts_${TICKER}_unfiltered.csv and bursts_${TICKER}_filtered.csv.
+UNFILTERED_SUFFIX=${UNFILTERED_SUFFIX:-unfiltered}
+FILTERED_SUFFIX=${FILTERED_SUFFIX:-filtered}
+
 # ── 3. Determine phase from task ID ─────────────────────────
 PHASE1_JOBS=84   # short horizons (unfiltered): cls models × 4 targets
 
@@ -57,11 +62,16 @@ mkdir -p logs
 
 for TICKER in ${TICKERS}; do
     if [ "${PHASE_TAG}" = "unfiltered" ]; then
-        BURSTS_CSV="results/bursts_${TICKER}_unfiltered.csv"
+        BURSTS_CSV="results/bursts_${TICKER}_${UNFILTERED_SUFFIX}.csv"
     else
-        BURSTS_CSV="results/bursts_${TICKER}_filtered.csv"
+        BURSTS_CSV="results/bursts_${TICKER}_${FILTERED_SUFFIX}.csv"
     fi
     OUTDIR="results/zoo_bursts_${TICKER}_${PHASE_TAG}/"
+
+    if [ ! -f "${BURSTS_CSV}" ]; then
+        echo "WARNING: Missing input ${BURSTS_CSV}; skipping ${TICKER} for this task"
+        continue
+    fi
 
     echo "Running ${TICKER} | ${TARGET} | ${BURSTS_CSV}"
     mkdir -p "${OUTDIR}"

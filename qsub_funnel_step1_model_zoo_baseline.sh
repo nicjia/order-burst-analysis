@@ -13,16 +13,7 @@ trap 'echo "ERROR line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
-# Map existing baseline files to expected zoo inputs (no re-extraction).
-for T in NVDA TSLA JPM MS; do
-  if [ -f "results/bursts_${T}_baseline.csv" ] && [ ! -f "results/bursts_${T}_unfiltered.csv" ]; then
-    ln -sf "results/bursts_${T}_baseline.csv" "results/bursts_${T}_unfiltered.csv"
-  fi
-  if [ -f "results/bursts_${T}_baseline_filtered.csv" ] && [ ! -f "results/bursts_${T}_filtered.csv" ]; then
-    ln -sf "results/bursts_${T}_baseline_filtered.csv" "results/bursts_${T}_filtered.csv"
-  fi
-done
-
-bash "${ROOT}/hoffman2_model_zoo.sh"
+# Run zoo directly against baseline artifacts to avoid shared symlink races.
+UNFILTERED_SUFFIX=baseline FILTERED_SUFFIX=baseline_filtered bash "${ROOT}/hoffman2_model_zoo.sh"
 
 echo "Baseline model-zoo task ${SGE_TASK_ID} done at $(date)"
