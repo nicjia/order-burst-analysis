@@ -66,7 +66,7 @@ for TICKER in NVDA TSLA JPM MS; do
                 -t 10.0 \
                 -j 8
 
-            python src_py/compute_permanence.py \
+            python3 src_py/compute_permanence.py \
                 "${RAW_CSV}" \
                 "${ROOT}/open_all.csv" \
                 "${ROOT}/close_all.csv" \
@@ -76,7 +76,7 @@ for TICKER in NVDA TSLA JPM MS; do
 
         echo "Running Python Eval for Config: ${CNAME}"
         
-        python src_py/regression_eval.py \
+        python3 src_py/regression_eval.py \
             --ticker "${TICKER}" \
             --data "${FILTERED_CSV}" \
             --config "${CNAME}" \

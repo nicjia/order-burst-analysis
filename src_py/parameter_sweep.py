@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -83,7 +84,7 @@ def main():
 
             # Permanence + CRSP lookups
             run([
-                "python", "src_py/compute_permanence.py",
+                sys.executable, "src_py/compute_permanence.py",
                 str(bursts_csv),
                 str(args.open),
                 str(args.close),
@@ -96,7 +97,7 @@ def main():
             zoo_outdir.mkdir(parents=True, exist_ok=True)
 
             run([
-                "python", "src_py/train_model_zoo.py",
+                sys.executable, "src_py/train_model_zoo.py",
                 str(filtered_csv),
                 "--model", args.model,
                 "--target", args.target,
