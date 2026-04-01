@@ -43,11 +43,12 @@ for TICKER in NVDA TSLA JPM MS; do
     for i in "${!NAMES[@]}"; do
         CNAME="${NAMES[$i]}"
         KVAL="${KAPPAS[$i]}"
+        RAW_CSV="${ROOT}/results/champ_${TICKER}_${CNAME}_bursts.csv"
         FILTERED_CSV="${ROOT}/results/champ_${TICKER}_${CNAME}_bursts_filtered.csv"
 
         # --- AUTO-RUN C++ DATA PROCESSOR IF MISSING ---
         if [ ! -f "${FILTERED_CSV}" ]; then
-            echo "Missing ${FILTERED_CSV}! Auto-running data_processor..."
+            echo "Missing ${FILTERED_CSV}! Auto-running data_processor + permanence..."
             
             # Parse parameters natively in bash from the CNAME
             IFS='_' read -ra PARTS <<< "$CNAME"
@@ -56,14 +57,20 @@ for TICKER in NVDA TSLA JPM MS; do
             D_VAL=${PARTS[2]:1} ; D_VAL=${D_VAL//p/.}
             R_VAL=${PARTS[3]:1} ; R_VAL=${R_VAL//p/.}
             
-            ./data_processor "${ROOT}/data/${TICKER}" "${FILTERED_CSV}" \
+            ./data_processor "${ROOT}/data/${TICKER}" "${RAW_CSV}" \
                 -s "${S_VAL}" \
                 -v "${V_VAL}" \
                 -d "${D_VAL}" \
                 -r "${R_VAL}" \
-                -k "${KVAL}" \
+                -k 0 \
                 -t 10.0 \
                 -j 8
+
+            python src_py/compute_permanence.py \
+                "${RAW_CSV}" \
+                "${ROOT}/open_all.csv" \
+                "${ROOT}/close_all.csv" \
+                --kappa 0
         fi
         # ----------------------------------------------
 

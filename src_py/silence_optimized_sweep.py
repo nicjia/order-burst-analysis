@@ -137,33 +137,39 @@ def main():
     for s in silence_values:
         s_tag = str(s).replace(".", "p")
         raw_csv = precompute_dir / f"bursts_{args.ticker}_s{s_tag}.csv"
+        perm_csv = raw_csv.with_name(raw_csv.stem + "_filtered" + raw_csv.suffix)
 
         # Precompute bursts once per silence threshold with minimal filtering.
-        run([
-            args.data_processor,
-            args.stock_folder,
-            str(raw_csv),
-            "-s", str(s),
-            "-v", "1",
-            "-d", "0.5",
-            "-r", "1.0",
-            "-k", "0",
-            "-t", str(args.tau_max),
-            "-j", str(max(1, args.workers)),
-            "-b", str(args.rth_start),
-            "-e", str(args.rth_end),
-        ])
+        if not raw_csv.exists():
+            run([
+                args.data_processor,
+                args.stock_folder,
+                str(raw_csv),
+                "-s", str(s),
+                "-v", "1",
+                "-d", "0.5",
+                "-r", "1.0",
+                "-k", "0",
+                "-t", str(args.tau_max),
+                "-j", str(max(1, args.workers)),
+                "-b", str(args.rth_start),
+                "-e", str(args.rth_end),
+            ])
+        else:
+            print(f"[cache] Reusing existing precompute file: {raw_csv}")
 
         # Add permanence columns once (kappa disabled here).
-        run([
-            "python3", "src_py/compute_permanence.py",
-            str(raw_csv),
-            args.open,
-            args.close,
-            "--kappa", "0",
-        ])
+        if not perm_csv.exists():
+            run([
+                "python3", "src_py/compute_permanence.py",
+                str(raw_csv),
+                args.open,
+                args.close,
+                "--kappa", "0",
+            ])
+        else:
+            print(f"[cache] Reusing existing permanence file: {perm_csv}")
 
-        perm_csv = raw_csv.with_name(raw_csv.stem + "_filtered" + raw_csv.suffix)
         base_df = pd.read_csv(perm_csv)
 
         for min_vol, dth, vr, k in itertools.product(

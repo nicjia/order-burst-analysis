@@ -247,11 +247,11 @@ def walk_forward_splits(df, min_train_months=3):
 # MODEL TRAINING
 # ═════════════════════════════════════════════════════════════
 
-def train_lgb_classifier(X_train, y_train, X_val, y_val):
+def train_lgb_classifier(X_train, y_train, X_val=None, y_val=None):
     """LightGBM binary classifier with early stopping."""
     if HAS_LGB:
         dtrain = lgb.Dataset(X_train, label=y_train)
-        dval   = lgb.Dataset(X_val, label=y_val, reference=dtrain)
+        dval = lgb.Dataset(X_val, label=y_val, reference=dtrain) if X_val is not None else None
         params = {
             'objective': 'binary',
             'metric': 'auc',
@@ -266,11 +266,13 @@ def train_lgb_classifier(X_train, y_train, X_val, y_val):
             'verbose': -1,
             'seed': 42,
         }
+        valid_sets = [dval] if dval is not None else [dtrain]
+        callbacks = [lgb.early_stopping(50, verbose=False)] if dval is not None else []
         model = lgb.train(
             params, dtrain,
             num_boost_round=1000,
-            valid_sets=[dval],
-            callbacks=[lgb.early_stopping(50, verbose=False)],
+            valid_sets=valid_sets,
+            callbacks=callbacks,
         )
         return model, 'lgb'
     else:
@@ -282,11 +284,11 @@ def train_lgb_classifier(X_train, y_train, X_val, y_val):
         return model, 'sklearn_gbt'
 
 
-def train_lgb_regressor(X_train, y_train, X_val, y_val):
+def train_lgb_regressor(X_train, y_train, X_val=None, y_val=None):
     """LightGBM regressor for φ(b; tCLOSE) with early stopping."""
     if HAS_LGB:
         dtrain = lgb.Dataset(X_train, label=y_train)
-        dval   = lgb.Dataset(X_val, label=y_val, reference=dtrain)
+        dval = lgb.Dataset(X_val, label=y_val, reference=dtrain) if X_val is not None else None
         params = {
             'objective': 'huber',       # robust to heavy tails
             'metric': 'mae',
@@ -301,11 +303,13 @@ def train_lgb_regressor(X_train, y_train, X_val, y_val):
             'verbose': -1,
             'seed': 42,
         }
+        valid_sets = [dval] if dval is not None else [dtrain]
+        callbacks = [lgb.early_stopping(50, verbose=False)] if dval is not None else []
         model = lgb.train(
             params, dtrain,
             num_boost_round=1000,
-            valid_sets=[dval],
-            callbacks=[lgb.early_stopping(50, verbose=False)],
+            valid_sets=valid_sets,
+            callbacks=callbacks,
         )
         return model, 'lgb'
     else:
@@ -491,6 +495,7 @@ def main():
     reg_results = []   # per-fold regression metrics
     all_y_true_cls  = []
     all_y_prob_lgb  = []
+    all_y_prob_lr   = []
     all_y_true_reg  = []
     all_y_pred_reg  = []
 
@@ -510,9 +515,26 @@ def main():
         n_train = len(train_idx)
         n_test  = len(test_idx)
 
+        # Split train fold into train/validation blocks for early stopping.
+        val_n = max(200, int(0.2 * n_train))
+        if n_train <= val_n + 1:
+            print(f"  SKIP fold {fold_i+1}: not enough train rows for validation")
+            continue
+
+        X_fit = X_train[:-val_n]
+        X_val = X_train[-val_n:]
+        y_fit_cls = y_train_cls[:-val_n]
+        y_val_cls = y_train_cls[-val_n:]
+        y_fit_reg = y_train_reg[:-val_n]
+        y_val_reg = y_train_reg[-val_n:]
+
+        # If validation has one class, disable classifier early stopping.
+        cls_val_X = X_val if len(np.unique(y_val_cls)) > 1 else None
+        cls_val_y = y_val_cls if cls_val_X is not None else None
+
         # ── 1. LightGBM classifier ──────────────────────────
         lgb_cls, lgb_type = train_lgb_classifier(
-            X_train, y_train_cls, X_test, y_test_cls)
+            X_fit, y_fit_cls, cls_val_X, cls_val_y)
         last_lgb_cls = lgb_cls
         y_prob_lgb = predict_proba(lgb_cls, X_test, lgb_type)
 
@@ -540,10 +562,11 @@ def main():
         m_lr['month'] = month_label
         m_lr['n_train'] = n_train
         cls_results.append(m_lr)
+        all_y_prob_lr.extend(y_prob_lr)
 
         # ── 3. LightGBM regressor ────────────────────────────
         lgb_reg, lgb_reg_type = train_lgb_regressor(
-            X_train, y_train_reg, X_test, y_test_reg)
+            X_fit, y_fit_reg, X_val, y_val_reg)
         y_pred_reg = predict_reg(lgb_reg, X_test, lgb_reg_type)
 
         m_reg = eval_regression(y_test_reg, y_pred_reg)
@@ -571,8 +594,10 @@ def main():
     # Classification
     all_y_true_cls = np.array(all_y_true_cls)
     all_y_prob_lgb = np.array(all_y_prob_lgb)
+    all_y_prob_lr = np.array(all_y_prob_lr)
 
     pooled_cls = eval_classification(all_y_true_cls, all_y_prob_lgb)
+    pooled_lr = eval_classification(all_y_true_cls, all_y_prob_lr)
     print(f"\n  Classification — LightGBM (target: φ_tCLOSE > 0)")
     for k, v in pooled_cls.items():
         if isinstance(v, float):
@@ -651,14 +676,9 @@ def main():
         f.write(f"| LightGBM | {pooled_cls['AUC']:.4f} | {pooled_cls['Accuracy']:.4f} | "
                 f"{pooled_cls['Precision']:.4f} | {pooled_cls['Recall']:.4f} | "
                 f"{pooled_cls['F1']:.4f} | {pooled_cls['Brier']:.4f} |\n")
-
-        # LogReg pooled
-        lr_pooled = eval_classification(
-            all_y_true_cls,
-            # recompute LR pooled? We didn't save it — use monthly means
-            all_y_prob_lgb  # placeholder — just report LGB here
-        )
-        f.write(f"| LogReg (monthly mean AUC) | {np.mean(lr_aucs):.4f} | — | — | — | — | — |\n")
+        f.write(f"| LogReg | {pooled_lr['AUC']:.4f} | {pooled_lr['Accuracy']:.4f} | "
+            f"{pooled_lr['Precision']:.4f} | {pooled_lr['Recall']:.4f} | "
+            f"{pooled_lr['F1']:.4f} | {pooled_lr['Brier']:.4f} |\n")
 
         f.write(f"\n## Regression: φ_tCLOSE (winsorized)\n\n")
         f.write("| Metric | Value |\n")

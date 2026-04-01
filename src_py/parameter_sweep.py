@@ -3,7 +3,7 @@
 parameter_sweep.py — Evaluate burst parameter sets for stability across stocks.
 
 Workflow per parameter set + ticker:
-  1) Run data_processor with burst parameters (includes -k kappa filter in C++)
+    1) Run data_processor with burst extraction only (kappa disabled in C++)
   2) Run compute_permanence.py to add Perm_* columns (arcsinh target)
   3) Train a simple model (default: logreg_l2) via train_model_zoo.py
   4) Collect AUC (or MAE for regression) and summarize across tickers
@@ -76,7 +76,7 @@ def main():
                 "-v", str(p.get("min_vol", 100)),
                 "-d", str(p.get("dir_thresh", 0.9)),
                 "-r", str(p.get("vol_ratio", 0.5)),
-                "-k", str(p.get("kappa", 0.10)),
+                "-k", "0",
                 "-t", str(p.get("tau_max", 10.0)),
             ]
             run(cmd)
@@ -124,7 +124,8 @@ def main():
             summary_rows.append({
                 "param_set": name,
                 "ticker": ticker,
-                metric_name: metric,
+                "metric_name": metric_name,
+                "metric_value": metric,
             })
 
         # Aggregate across tickers
@@ -140,12 +141,14 @@ def main():
         summary_rows.append({
             "param_set": name,
             "ticker": "__MEAN__",
-            "AUC": mean_metric,
+            "metric_name": metric_name if metric_vals else "Metric",
+            "metric_value": mean_metric,
         })
         summary_rows.append({
             "param_set": name,
             "ticker": "__STD__",
-            "AUC": std_metric,
+            "metric_name": metric_name if metric_vals else "Metric",
+            "metric_value": std_metric,
         })
 
     # Write summary CSV

@@ -492,6 +492,15 @@ def _needs_subsample(model_key):
     return LIMITS.get(model_key, None)
 
 
+def _time_ordered_train_val_split(X, y, val_frac=0.2, min_val=200):
+    """Split training data into chronological train/validation blocks."""
+    n = len(y)
+    val_n = max(min_val, int(n * val_frac))
+    if n <= val_n + 1:
+        return X, y, None, None
+    return X[:-val_n], y[:-val_n], X[-val_n:], y[-val_n:]
+
+
 def build_classifier(model_key, n_features, n_train):
     """Return an sklearn-compatible classifier."""
 
@@ -1059,20 +1068,31 @@ def run_single_model(df, feat_cols, target_key, model_key, splits, outdir):
 
         # Subsample if needed
         if subsample_limit and len(X_train) > subsample_limit:
-            rng = np.random.RandomState(SEED + fold_i)
-            sub_idx = rng.choice(len(X_train), subsample_limit, replace=False)
-            X_train_fit = X_train[sub_idx]
-            y_train_fit = y_train[sub_idx]
+            # Keep the most recent observations to preserve time order.
+            X_train_fit_raw = X_train[-subsample_limit:]
+            y_train_fit_raw = y_train[-subsample_limit:]
         else:
-            X_train_fit = X_train
-            y_train_fit = y_train
+            X_train_fit_raw = X_train
+            y_train_fit_raw = y_train
+
+        X_train_fit, y_train_fit, X_val_raw, y_val = _time_ordered_train_val_split(
+            X_train_fit_raw, y_train_fit_raw)
+
+        if task_type in {'binary', 'multiclass'} and len(np.unique(y_train_fit)) < 2:
+            print(f"  SKIP fold {fold_i}: training set collapsed to one class")
+            continue
+
+        if X_val_raw is not None and task_type in {'binary', 'multiclass'} and len(np.unique(y_val)) < 2:
+            X_val_raw, y_val = None, None
 
         # Scale
         if needs_scale:
             scaler.fit(X_train_fit)
             X_train_fit = scaler.transform(X_train_fit)
+            X_val_s     = scaler.transform(X_val_raw) if X_val_raw is not None else None
             X_test_s    = scaler.transform(X_test)
         else:
+            X_val_s = X_val_raw
             X_test_s = X_test
 
         # Build model
@@ -1088,13 +1108,16 @@ def run_single_model(df, feat_cols, target_key, model_key, splits, outdir):
         # Fit
         try:
             if hasattr(model, '_is_lgb_wrapper') and model._is_lgb_wrapper:
-                model.fit(X_train_fit, y_train_fit, X_test_s, y_test)
+                model.fit(X_train_fit, y_train_fit, X_val_s, y_val)
             elif hasattr(model, 'fit'):
                 # XGBoost with eval_set
                 if isinstance(model, (xgb.XGBClassifier if HAS_XGB else type(None),
                                       xgb.XGBRegressor if HAS_XGB else type(None))):
-                    model.fit(X_train_fit, y_train_fit,
-                              eval_set=[(X_test_s, y_test)], verbose=False)
+                    if X_val_s is not None:
+                        model.fit(X_train_fit, y_train_fit,
+                                  eval_set=[(X_val_s, y_val)], verbose=False)
+                    else:
+                        model.fit(X_train_fit, y_train_fit, verbose=False)
                 else:
                     model.fit(X_train_fit, y_train_fit)
         except Exception as e:

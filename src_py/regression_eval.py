@@ -5,7 +5,6 @@ from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegresso
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score
-from sklearn.model_selection import TimeSeriesSplit, cross_val_predict
 import argparse
 import os
 
@@ -67,7 +66,7 @@ BASE_FEATURES = [
     'ImpactPerShare', 'LogSpread', 'DepthRatio', 'LogTradeIntensity', 'SpreadXVolume'
 ]
 
-# 3. DYNAMIC WALK-FORWARD SPLIT
+# 3. CHRONOLOGICAL HOLDOUT SPLIT
 df['date_parsed'] = df['Date'].dt.date
 train_start = pd.to_datetime(args.train_start).date()
 test_start = pd.to_datetime(args.test_start).date()
@@ -86,9 +85,6 @@ models = {
     'ElasticNet': ElasticNet(alpha=0.1, l1_ratio=0.5, random_state=42),
     'RandomForest_Shallow': RandomForestRegressor(n_estimators=100, max_depth=4, min_samples_leaf=100, random_state=42, n_jobs=-1)
 }
-
-# Use TimeSeriesSplit to prevent look-ahead bias during cross-validation
-tscv = TimeSeriesSplit(n_splits=5)
 
 for target in targets:
     if target not in df.columns:
@@ -125,9 +121,9 @@ for target in targets:
         # Fit the final model on the training data
         model.fit(X_train, y_train)
         
-        # Use in-sample predictions for the threshold warm-up to avoid TimeSeriesSplit 
-        # partition errors. Because of the heavy regularization, magnitude bias is minimal.
-        train_preds_cv = model.predict(X_train)
+        # Use training predictions to warm up a rolling threshold series.
+        # Threshold at time t uses only information available before t.
+        train_preds = model.predict(X_train)
         
         # Generate the actual out-of-sample predictions for the test set
         test_preds = model.predict(X_test)
@@ -137,18 +133,17 @@ for target in targets:
         dir_acc = accuracy_score((y_test > 0).astype(int), (test_preds > 0).astype(int))
         
         pred_dates = pd.to_datetime(np.concatenate([
-            train_df.loc[tr_mask, 'Date'], 
+            train_df.loc[tr_mask, 'Date'],
             test_df.loc[te_mask, 'Date']
         ]))
-        
-        # Build threshold using the warm-up predictions
+
         all_abs_preds = pd.Series(
-            np.concatenate([np.abs(train_preds_cv), np.abs(test_preds)]), 
+            np.concatenate([np.abs(train_preds), np.abs(test_preds)]),
             index=pred_dates
         )
-        
+
         rolling_thresholds = all_abs_preds.rolling('30D', min_periods=1).quantile(0.75).shift(1).bfill()
-        test_thresholds = rolling_thresholds.iloc[len(train_preds_cv):].values
+        test_thresholds = rolling_thresholds.iloc[len(train_preds):].values
         traded_indices = np.abs(test_preds) > test_thresholds
         
         captured_perm = y_test.values[traded_indices].mean() if traded_indices.sum() > 0 else 0
