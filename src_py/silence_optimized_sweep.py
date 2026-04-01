@@ -119,6 +119,9 @@ def main():
     if not target_list:
         raise ValueError("No valid targets provided via --target")
 
+    short_targets = {"cls_1m", "cls_3m", "cls_5m", "cls_10m", "reg_1m", "reg_3m", "reg_5m", "reg_10m"}
+    has_short_horizon_target = any(t in short_targets for t in target_list)
+
     silence_values = parse_float_list(args.silence_values)
     min_vol_values = parse_int_list(args.min_vol_values)
     dir_thresh_values = parse_float_list(args.dir_thresh_values)
@@ -175,17 +178,18 @@ def main():
         for min_vol, dth, vr, k in itertools.product(
             min_vol_values, dir_thresh_values, vol_ratio_values, kappa_values
         ):
+            effective_kappa = 0.0 if has_short_horizon_target else k
             filtered = classify_and_filter(
                 base_df,
                 min_vol=min_vol,
                 dir_thresh=dth,
                 vol_ratio=vr,
-                kappa=k,
+                kappa=effective_kappa,
                 require_directional=args.require_directional,
             )
 
             config_tag = (
-                f"s{s_tag}_v{min_vol}_d{dth}_r{vr}_k{k}".replace(".", "p")
+                f"s{s_tag}_v{min_vol}_d{dth}_r{vr}_k{effective_kappa}".replace(".", "p")
             )
             candidate_csv = candidates_dir / f"{args.ticker}_{config_tag}.csv"
             filtered.to_csv(candidate_csv, index=False)

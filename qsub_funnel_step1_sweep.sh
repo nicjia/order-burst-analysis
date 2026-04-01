@@ -2,8 +2,8 @@
 #$ -cwd
 #$ -j y
 #$ -o /u/scratch/n/nicjia/order-burst-analysis/logs/funnel_step1_sweep_$JOB_ID_$TASK_ID.out
-#$ -l h_data=16G,h_rt=24:00:00
-#$ -pe shared 8
+#$ -l h_data=10G,h_rt=10:00:00
+#$ -pe shared 6
 #$ -t 1-4
 #$ -N burst_sweep
 
@@ -31,9 +31,10 @@ SILENCE_VALUES=${SILENCE_VALUES:-0.5,1.0,2.0}
 MIN_VOL_VALUES=${MIN_VOL_VALUES:-50,100,200,500}
 DIR_THRESH_VALUES=${DIR_THRESH_VALUES:-0.7,0.8,0.9}
 VOL_RATIO_VALUES=${VOL_RATIO_VALUES:-0.1,0.3,0.5}
-KAPPA_VALUES=${KAPPA_VALUES:-0.2,0.5,1.0}
-SWEEP_MODEL=${SWEEP_MODEL:-logreg_l2}
-SWEEP_TARGETS=${SWEEP_TARGETS:-cls_1m,cls_5m,cls_10m,cls_close}
+# Keep kappa at 0 in sweep by default to avoid leakage for short horizons.
+KAPPA_VALUES=${KAPPA_VALUES:-0.0}
+SWEEP_MODEL=${SWEEP_MODEL:-xgb}
+SWEEP_TARGETS=${SWEEP_TARGETS:-cls_1m,cls_3m,cls_5m,cls_10m}
 OUTDIR="${ROOT}/results/silence_sweep_${TICKER}"
 
 python3 src_py/silence_optimized_sweep.py \

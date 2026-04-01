@@ -44,11 +44,11 @@ for TICKER in NVDA TSLA JPM MS; do
         CNAME="${NAMES[$i]}"
         KVAL="${KAPPAS[$i]}"
         RAW_CSV="${ROOT}/results/champ_${TICKER}_${CNAME}_bursts.csv"
-        FILTERED_CSV="${ROOT}/results/champ_${TICKER}_${CNAME}_bursts_filtered.csv"
+        PERM_UNFILTERED_CSV="${ROOT}/results/champ_${TICKER}_${CNAME}_bursts_unfiltered.csv"
 
-        # --- AUTO-RUN C++ DATA PROCESSOR IF MISSING ---
-        if [ ! -f "${FILTERED_CSV}" ]; then
-            echo "Missing ${FILTERED_CSV}! Auto-running data_processor + permanence..."
+        # --- AUTO-RUN C++ + PERMANENCE IF MISSING ---
+        if [ ! -f "${PERM_UNFILTERED_CSV}" ]; then
+            echo "Missing ${PERM_UNFILTERED_CSV}! Auto-running data_processor + permanence..."
             
             # Parse parameters natively in bash from the CNAME
             IFS='_' read -ra PARTS <<< "$CNAME"
@@ -71,6 +71,9 @@ for TICKER in NVDA TSLA JPM MS; do
                 "${ROOT}/open_all.csv" \
                 "${ROOT}/close_all.csv" \
                 --kappa 0
+
+            # compute_permanence writes *_filtered.csv; with kappa=0 this is unfiltered permanence.
+            cp "${ROOT}/results/champ_${TICKER}_${CNAME}_bursts_filtered.csv" "${PERM_UNFILTERED_CSV}"
         fi
         # ----------------------------------------------
 
@@ -78,7 +81,7 @@ for TICKER in NVDA TSLA JPM MS; do
         
         python3 src_py/regression_eval.py \
             --ticker "${TICKER}" \
-            --data "${FILTERED_CSV}" \
+            --data "${PERM_UNFILTERED_CSV}" \
             --config "${CNAME}" \
             --kappa "${KVAL}" \
             --train_start "${TRAIN_START}" \
