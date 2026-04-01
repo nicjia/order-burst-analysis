@@ -85,7 +85,7 @@ void BurstDetector::classify_direction() {
 // ── FILTER: is this burst worth keeping? ────────────────────
 bool BurstDetector::passes_filter() {
     (void)min_volume_; 
-    return true;
+    return current_burst_.volume >= min_volume_;
 }
 
 // ─────────────────────────────────────────────────────────────

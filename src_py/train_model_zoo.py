@@ -281,6 +281,12 @@ def engineer_features(df):
     df['HourOfDay'] = ((df['StartTime'] - RTH_START) / 3600).clip(0, 6.5).astype(int)
 
     # ── Log transforms ───────────────────────────────────────
+    if 'PeakImpact' not in df.columns:
+        if 'PeakPrice' in df.columns and 'StartPrice' in df.columns:
+            df['PeakImpact'] = (df['PeakPrice'] - df['StartPrice']).abs()
+        else:
+            df['PeakImpact'] = 0.0
+
     df['LogVolume']     = np.log1p(df['BurstVolume'])
     df['LogPeakImpact'] = np.log1p(df['PeakImpact'].abs() * 10000)
 

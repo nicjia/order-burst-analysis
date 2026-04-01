@@ -23,7 +23,9 @@
 . /etc/profile
 
 # ── 2. Load Python environment ──────────────────────────────
-module load anaconda3
+. /u/local/Modules/default/init/bash
+module load gcc/11.3.0 python/3.9.6
+source "${ROOT}/.venv/bin/activate"
 
 # Tickers to evaluate for cross-stock stability.
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
