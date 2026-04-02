@@ -26,19 +26,28 @@ mkdir -p "${ROOT}/logs" "${ROOT}/results"
 # Give the output a new name so we don't accidentally overwrite the old one
 rm -f "${ROOT}/results/multi_model_regression_summary.csv" 
 
+TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
+
+# Configs chosen from cross-asset sweep stage.
+# Keep count aligned between NAMES and KAPPAS.
 NAMES=(
-  "s0p5_v50_d0p7_r0p5_k0p2"
-  "s0p5_v100_d0p8_r0p1_k0p2"
-  "s0p5_v50_d0p7_r0p3_k1p0"
-  "s0p5_v100_d0p9_r0p5_k0p2"
-  "s2p0_v50_d0p7_r0p5_k0p5"
+    "s0p5_v50_d0p7_r0p5_k0p2"
+    "s0p5_v100_d0p8_r0p1_k0p2"
+    "s0p5_v50_d0p7_r0p3_k1p0"
+    "s0p5_v100_d0p9_r0p5_k0p2"
+    "s2p0_v50_d0p7_r0p5_k0p5"
 )
 KAPPAS=("0.2" "0.2" "1.0" "0.2" "0.5")
+
+if [ ${#NAMES[@]} -ne ${#KAPPAS[@]} ]; then
+    echo "ERROR: NAMES and KAPPAS length mismatch" >&2
+    exit 1
+fi
 
 echo "========== MULTI-MODEL REGRESSION EVALUATION =========="
 echo "Regime: Train [${TRAIN_START} to ${TEST_START}] | Test [${TEST_START} to ${TEST_END}]"
 
-for TICKER in NVDA TSLA JPM MS; do
+for TICKER in ${TICKERS}; do
     echo -e "\n>>> Processing ${TICKER} <<<"
     
     for i in "${!NAMES[@]}"; do
