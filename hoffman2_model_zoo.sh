@@ -16,7 +16,7 @@
 #$ -j y
 #$ -o logs/zoo_$JOB_ID_$TASK_ID.out
 #$ -l h_data=8G,h_rt=4:00:00
-#$ -pe shared 4
+#$ -pe shared 2
 #$ -t 1-147
 
 # ── 1. Initialize cluster profile (enables `module` command) ─
