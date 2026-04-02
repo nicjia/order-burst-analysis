@@ -46,8 +46,8 @@ TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 # Input filename suffixes for short/long phases.
 # Model-zoo should benchmark models on a single baseline extraction.
 # Default behavior:
-#   short phase -> bursts_${TICKER}_baseline_unfiltered.csv (Perm_* present, kappa=0)
-#   long phase  -> bursts_${TICKER}_baseline_filtered.csv
+#   short phase -> bursts_${TICKER}_baseline_unfiltered.csv   (kappa=0 permanence-enriched)
+#   long phase  -> bursts_${TICKER}_baseline_filtered.csv     (kappa=BASE_KAPPA_LONG)
 #
 # If you really need legacy names, set:
 #   UNFILTERED_SUFFIX=unfiltered FILTERED_SUFFIX=filtered
@@ -69,8 +69,10 @@ FORCE_REBUILD_BASELINE=${FORCE_REBUILD_BASELINE:-0}
 ensure_baseline_inputs() {
     local ticker="$1"
     local raw_csv="results/bursts_${ticker}_baseline.csv"
-    local unfiltered_csv="results/bursts_${ticker}_baseline_unfiltered.csv"
+    local short_csv="results/bursts_${ticker}_baseline_unfiltered.csv"
     local filtered_csv="results/bursts_${ticker}_baseline_filtered.csv"
+    local long_seed_csv="results/bursts_${ticker}_baseline_longseed.csv"
+    local long_seed_out_csv="results/bursts_${ticker}_baseline_longseed_filtered.csv"
     local lock_dir="results/.baseline_lock_${ticker}"
     local wait_s=0
     local stock_dir="${ROOT}/data/${ticker}"
@@ -96,8 +98,9 @@ ensure_baseline_inputs() {
     trap 'rmdir "${lock_dir}" 2>/dev/null || true' RETURN
 
     if [ "${FORCE_REBUILD_BASELINE}" = "1" ]; then
-        echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing ${raw_csv}, ${unfiltered_csv}, ${filtered_csv}"
-        rm -f "${raw_csv}" "${unfiltered_csv}" "${filtered_csv}"
+        echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing baseline artifacts for ${ticker}"
+        rm -f "${raw_csv}" "${short_csv}" "${filtered_csv}" \
+              "${long_seed_csv}" "${long_seed_out_csv}"
     fi
 
     # If prior job crashed and left an empty/corrupt file, rebuild it.
@@ -105,9 +108,9 @@ ensure_baseline_inputs() {
         echo "WARN: Found empty baseline file ${raw_csv}; rebuilding"
         rm -f "${raw_csv}"
     fi
-    if [ -f "${unfiltered_csv}" ] && [ ! -s "${unfiltered_csv}" ]; then
-        echo "WARN: Found empty unfiltered baseline file ${unfiltered_csv}; rebuilding"
-        rm -f "${unfiltered_csv}"
+    if [ -f "${short_csv}" ] && [ ! -s "${short_csv}" ]; then
+        echo "WARN: Found empty short baseline file ${short_csv}; rebuilding"
+        rm -f "${short_csv}"
     fi
     if [ -f "${filtered_csv}" ] && [ ! -s "${filtered_csv}" ]; then
         echo "WARN: Found empty filtered baseline file ${filtered_csv}; rebuilding"
@@ -132,34 +135,39 @@ ensure_baseline_inputs() {
         fi
     fi
 
-    # Short-phase input must include Perm_* columns with NO kappa filtering.
-    if [ ! -f "${unfiltered_csv}" ]; then
-        local tmp_raw="results/bursts_${ticker}_baseline_k0tmp.csv"
-        local tmp_out="results/bursts_${ticker}_baseline_k0tmp_filtered.csv"
-
-        cp "${raw_csv}" "${tmp_raw}"
-        echo "INFO: Building baseline permanence for ${ticker} (kappa=0) -> ${unfiltered_csv}"
+    if [ ! -f "${short_csv}" ]; then
+        echo "INFO: Building SHORT permanence dataset for ${ticker} (kappa=0) -> ${short_csv}"
         python3 src_py/compute_permanence.py \
-            "${tmp_raw}" \
+            "${raw_csv}" \
             "${ROOT}/open_all.csv" \
             "${ROOT}/close_all.csv" \
             --kappa 0
-        mv -f "${tmp_out}" "${unfiltered_csv}"
-        rm -f "${tmp_raw}"
 
-        if [ ! -s "${unfiltered_csv}" ]; then
-            echo "ERROR: kappa=0 permanence output empty: ${unfiltered_csv}" >&2
+        # compute_permanence always writes *_filtered.csv; with kappa=0 this is unfiltered permanence.
+        if [ -f "${filtered_csv}" ] && [ ! -f "${short_csv}" ]; then
+            mv "${filtered_csv}" "${short_csv}"
+        fi
+
+        if [ ! -s "${short_csv}" ]; then
+            echo "ERROR: compute_permanence produced empty output: ${short_csv}" >&2
             exit 1
         fi
     fi
 
     if [ ! -f "${filtered_csv}" ]; then
-        echo "INFO: Building baseline permanence for ${ticker} (kappa=${BASE_KAPPA_LONG}) -> ${filtered_csv}"
+        echo "INFO: Building LONG permanence dataset for ${ticker} (kappa=${BASE_KAPPA_LONG}) -> ${filtered_csv}"
+        cp "${raw_csv}" "${long_seed_csv}"
+
         python3 src_py/compute_permanence.py \
-            "${raw_csv}" \
+            "${long_seed_csv}" \
             "${ROOT}/open_all.csv" \
             "${ROOT}/close_all.csv" \
             --kappa "${BASE_KAPPA_LONG}"
+
+        if [ -f "${long_seed_out_csv}" ]; then
+            mv "${long_seed_out_csv}" "${filtered_csv}"
+        fi
+        rm -f "${long_seed_csv}"
 
         if [ ! -s "${filtered_csv}" ]; then
             echo "ERROR: compute_permanence produced empty output: ${filtered_csv}" >&2
