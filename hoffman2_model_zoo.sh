@@ -32,6 +32,14 @@ set -Eeo pipefail
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
+# Build binary on demand inside the proper toolchain environment.
+if [ ! -x "${ROOT}/data_processor" ]; then
+    echo "INFO: data_processor missing; building with make"
+    make clean && make
+fi
+
+echo "Compiler: $(g++ --version | head -n 1)"
+
 # Tickers to evaluate for cross-stock stability.
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 
@@ -62,10 +70,32 @@ ensure_baseline_inputs() {
     local ticker="$1"
     local raw_csv="results/bursts_${ticker}_baseline.csv"
     local filtered_csv="results/bursts_${ticker}_baseline_filtered.csv"
+    local lock_dir="results/.baseline_lock_${ticker}"
+    local wait_s=0
+
+    # One writer per ticker to avoid SGE array races creating partial/empty CSVs.
+    while ! mkdir "${lock_dir}" 2>/dev/null; do
+        sleep 2
+        wait_s=$((wait_s + 2))
+        if [ $((wait_s % 30)) -eq 0 ]; then
+            echo "INFO: waiting for baseline lock ${lock_dir} (${wait_s}s)"
+        fi
+    done
+    trap 'rmdir "${lock_dir}" 2>/dev/null || true' RETURN
 
     if [ "${FORCE_REBUILD_BASELINE}" = "1" ]; then
         echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing ${raw_csv} and ${filtered_csv}"
         rm -f "${raw_csv}" "${filtered_csv}"
+    fi
+
+    # If prior job crashed and left an empty/corrupt file, rebuild it.
+    if [ -f "${raw_csv}" ] && [ ! -s "${raw_csv}" ]; then
+        echo "WARN: Found empty baseline file ${raw_csv}; rebuilding"
+        rm -f "${raw_csv}"
+    fi
+    if [ -f "${filtered_csv}" ] && [ ! -s "${filtered_csv}" ]; then
+        echo "WARN: Found empty filtered baseline file ${filtered_csv}; rebuilding"
+        rm -f "${filtered_csv}"
     fi
 
     if [ ! -f "${raw_csv}" ]; then
@@ -79,6 +109,11 @@ ensure_baseline_inputs() {
             -t "${BASE_TAU_MAX}" \
             -j "${NSLOTS:-4}" \
             -b 34200 -e 57600
+
+        if [ ! -s "${raw_csv}" ]; then
+            echo "ERROR: data_processor produced empty output: ${raw_csv}" >&2
+            exit 1
+        fi
     fi
 
     if [ ! -f "${filtered_csv}" ]; then
@@ -88,7 +123,16 @@ ensure_baseline_inputs() {
             "${ROOT}/open_all.csv" \
             "${ROOT}/close_all.csv" \
             --kappa "${BASE_KAPPA_LONG}"
+
+        if [ ! -s "${filtered_csv}" ]; then
+            echo "ERROR: compute_permanence produced empty output: ${filtered_csv}" >&2
+            exit 1
+        fi
     fi
+
+    # Release lock for waiting array tasks.
+    rmdir "${lock_dir}" 2>/dev/null || true
+    trap - RETURN
 }
 
 # ── 3. Determine phase from task ID ─────────────────────────
