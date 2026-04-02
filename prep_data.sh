@@ -5,7 +5,7 @@
 #$ -l h_data=8G,h_rt=6:00:00
 #$ -pe shared 4
 
-set -Eeo pipefail
+
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
@@ -13,6 +13,9 @@ cd "${ROOT}"
 . /etc/profile
 . /u/local/Modules/default/init/bash
 module load gcc/11.3.0 python/3.9.6
+
+set -Eeo pipefail
+
 source "${ROOT}/.venv/bin/activate"
 
 mkdir -p logs results
