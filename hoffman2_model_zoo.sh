@@ -32,12 +32,7 @@ set -Eeo pipefail
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
-# Build binary on demand inside the proper toolchain environment.
-if [ ! -x "${ROOT}/data_processor" ]; then
-    echo "INFO: data_processor missing; building with make"
-    make clean && make
-fi
-
+# Build binary only when running prep mode.
 echo "Compiler: $(g++ --version | head -n 1)"
 
 # Tickers to evaluate for cross-stock stability.
@@ -66,15 +61,18 @@ BASE_KAPPA_LONG=${BASE_KAPPA_LONG:-0.5}
 # Set FORCE_REBUILD_BASELINE=1 to delete and rebuild baseline CSVs.
 FORCE_REBUILD_BASELINE=${FORCE_REBUILD_BASELINE:-0}
 
-ensure_baseline_inputs() {
+# PREP_ONLY=1 runs a sequential precompute stage and exits.
+# This avoids all array-task races during data preparation.
+PREP_ONLY=${PREP_ONLY:-0}
+PREP_WORKERS=${PREP_WORKERS:-1}
+
+prepare_one_ticker() {
     local ticker="$1"
     local raw_csv="results/bursts_${ticker}_baseline.csv"
     local short_csv="results/bursts_${ticker}_baseline_unfiltered.csv"
     local filtered_csv="results/bursts_${ticker}_baseline_filtered.csv"
     local long_seed_csv="results/bursts_${ticker}_baseline_longseed.csv"
     local long_seed_out_csv="results/bursts_${ticker}_baseline_longseed_filtered.csv"
-    local lock_dir="results/.baseline_lock_${ticker}"
-    local wait_s=0
     local stock_dir="${ROOT}/data/${ticker}"
 
     # If source data is missing (e.g., scratch purge), skip this ticker.
@@ -86,16 +84,6 @@ ensure_baseline_inputs() {
         echo "WARN: No *_message_*.csv found in ${stock_dir}; skipping ${ticker}"
         return 1
     fi
-
-    # One writer per ticker to avoid SGE array races creating partial/empty CSVs.
-    while ! mkdir "${lock_dir}" 2>/dev/null; do
-        sleep 2
-        wait_s=$((wait_s + 2))
-        if [ $((wait_s % 30)) -eq 0 ]; then
-            echo "INFO: waiting for baseline lock ${lock_dir} (${wait_s}s)"
-        fi
-    done
-    trap 'rmdir "${lock_dir}" 2>/dev/null || true' RETURN
 
     if [ "${FORCE_REBUILD_BASELINE}" = "1" ]; then
         echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing baseline artifacts for ${ticker}"
@@ -126,7 +114,7 @@ ensure_baseline_inputs() {
             -r "${BASE_VOL_RATIO}" \
             -k 0 \
             -t "${BASE_TAU_MAX}" \
-            -j "${NSLOTS:-4}" \
+            -j "${PREP_WORKERS}" \
             -b 34200 -e 57600
 
         if [ ! -s "${raw_csv}" ]; then
@@ -175,10 +163,41 @@ ensure_baseline_inputs() {
         fi
     fi
 
-    # Release lock for waiting array tasks.
-    rmdir "${lock_dir}" 2>/dev/null || true
-    trap - RETURN
 }
+
+prepare_all_baselines() {
+    mkdir -p logs results
+
+    if [ ! -x "${ROOT}/data_processor" ]; then
+        echo "INFO: data_processor missing; building with make"
+        make clean && make
+    fi
+
+    echo "=========================================="
+    echo "Baseline Preparation (Sequential)"
+    echo "  Tickers:      ${TICKERS}"
+    echo "  Params:       s=${BASE_SILENCE} v=${BASE_MIN_VOL} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO}"
+    echo "  Kappa long:   ${BASE_KAPPA_LONG}"
+    echo "  Workers:      ${PREP_WORKERS}"
+    echo "  Force rebuild:${FORCE_REBUILD_BASELINE}"
+    echo "=========================================="
+
+    for TICKER in ${TICKERS}; do
+        prepare_one_ticker "${TICKER}" || true
+    done
+
+    echo "Baseline preparation finished at $(date)"
+}
+
+if [ "${PREP_ONLY}" = "1" ]; then
+    # If submitted as an array, only task 1 performs prep; others exit.
+    if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "1" ]; then
+        echo "PREP_ONLY=1 and SGE_TASK_ID=${SGE_TASK_ID}; exiting non-task-1 shard"
+        exit 0
+    fi
+    prepare_all_baselines
+    exit 0
+fi
 
 # ── 3. Determine phase from task ID ─────────────────────────
 PHASE1_JOBS=84   # short horizons (unfiltered): cls models × 4 targets
@@ -210,11 +229,12 @@ echo "=========================================="
 
 mkdir -p logs
 
-for TICKER in ${TICKERS}; do
-    if ! ensure_baseline_inputs "${TICKER}"; then
-        continue
-    fi
+echo "INFO: Training mode (no baseline generation in array tasks)."
+echo "INFO: Expecting precomputed files:"
+echo "      short -> results/bursts_<TICKER>_${UNFILTERED_SUFFIX}.csv"
+echo "      long  -> results/bursts_<TICKER>_${FILTERED_SUFFIX}.csv"
 
+for TICKER in ${TICKERS}; do
     if [ "${PHASE_TAG}" = "unfiltered" ]; then
         BURSTS_CSV="results/bursts_${TICKER}_${UNFILTERED_SUFFIX}.csv"
         LEGACY_CSV="results/bursts_${TICKER}_unfiltered.csv"
