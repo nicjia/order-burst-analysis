@@ -72,6 +72,17 @@ ensure_baseline_inputs() {
     local filtered_csv="results/bursts_${ticker}_baseline_filtered.csv"
     local lock_dir="results/.baseline_lock_${ticker}"
     local wait_s=0
+    local stock_dir="${ROOT}/data/${ticker}"
+
+    # If source data is missing (e.g., scratch purge), skip this ticker.
+    if [ ! -d "${stock_dir}" ]; then
+        echo "WARN: Missing stock folder ${stock_dir}; skipping ${ticker}"
+        return 1
+    fi
+    if ! ls "${stock_dir}"/*_message_*.csv >/dev/null 2>&1; then
+        echo "WARN: No *_message_*.csv found in ${stock_dir}; skipping ${ticker}"
+        return 1
+    fi
 
     # One writer per ticker to avoid SGE array races creating partial/empty CSVs.
     while ! mkdir "${lock_dir}" 2>/dev/null; do
@@ -166,7 +177,9 @@ echo "=========================================="
 mkdir -p logs
 
 for TICKER in ${TICKERS}; do
-    ensure_baseline_inputs "${TICKER}"
+    if ! ensure_baseline_inputs "${TICKER}"; then
+        continue
+    fi
 
     if [ "${PHASE_TAG}" = "unfiltered" ]; then
         BURSTS_CSV="results/bursts_${TICKER}_${UNFILTERED_SUFFIX}.csv"
