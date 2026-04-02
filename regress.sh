@@ -17,9 +17,10 @@ TEST_END="2024-12-31"
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
+# ── Load Python environment ──────────────────────────────
 . /u/local/Modules/default/init/bash
 module load gcc/11.3.0 python/3.9.6
-source "${ROOT}/.venv/bin/activate"
+source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
 
 mkdir -p "${ROOT}/logs" "${ROOT}/results"
 # Give the output a new name so we don't accidentally overwrite the old one
