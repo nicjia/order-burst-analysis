@@ -46,12 +46,12 @@ TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 # Input filename suffixes for short/long phases.
 # Model-zoo should benchmark models on a single baseline extraction.
 # Default behavior:
-#   short phase -> bursts_${TICKER}_baseline.csv
+#   short phase -> bursts_${TICKER}_baseline_unfiltered.csv (Perm_* present, kappa=0)
 #   long phase  -> bursts_${TICKER}_baseline_filtered.csv
 #
 # If you really need legacy names, set:
 #   UNFILTERED_SUFFIX=unfiltered FILTERED_SUFFIX=filtered
-UNFILTERED_SUFFIX=${UNFILTERED_SUFFIX:-baseline}
+UNFILTERED_SUFFIX=${UNFILTERED_SUFFIX:-baseline_unfiltered}
 FILTERED_SUFFIX=${FILTERED_SUFFIX:-baseline_filtered}
 
 # Default burst extraction params for model-selection baseline.
@@ -69,6 +69,7 @@ FORCE_REBUILD_BASELINE=${FORCE_REBUILD_BASELINE:-0}
 ensure_baseline_inputs() {
     local ticker="$1"
     local raw_csv="results/bursts_${ticker}_baseline.csv"
+    local unfiltered_csv="results/bursts_${ticker}_baseline_unfiltered.csv"
     local filtered_csv="results/bursts_${ticker}_baseline_filtered.csv"
     local lock_dir="results/.baseline_lock_${ticker}"
     local wait_s=0
@@ -95,14 +96,18 @@ ensure_baseline_inputs() {
     trap 'rmdir "${lock_dir}" 2>/dev/null || true' RETURN
 
     if [ "${FORCE_REBUILD_BASELINE}" = "1" ]; then
-        echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing ${raw_csv} and ${filtered_csv}"
-        rm -f "${raw_csv}" "${filtered_csv}"
+        echo "INFO: FORCE_REBUILD_BASELINE=1 -> removing ${raw_csv}, ${unfiltered_csv}, ${filtered_csv}"
+        rm -f "${raw_csv}" "${unfiltered_csv}" "${filtered_csv}"
     fi
 
     # If prior job crashed and left an empty/corrupt file, rebuild it.
     if [ -f "${raw_csv}" ] && [ ! -s "${raw_csv}" ]; then
         echo "WARN: Found empty baseline file ${raw_csv}; rebuilding"
         rm -f "${raw_csv}"
+    fi
+    if [ -f "${unfiltered_csv}" ] && [ ! -s "${unfiltered_csv}" ]; then
+        echo "WARN: Found empty unfiltered baseline file ${unfiltered_csv}; rebuilding"
+        rm -f "${unfiltered_csv}"
     fi
     if [ -f "${filtered_csv}" ] && [ ! -s "${filtered_csv}" ]; then
         echo "WARN: Found empty filtered baseline file ${filtered_csv}; rebuilding"
@@ -123,6 +128,27 @@ ensure_baseline_inputs() {
 
         if [ ! -s "${raw_csv}" ]; then
             echo "ERROR: data_processor produced empty output: ${raw_csv}" >&2
+            exit 1
+        fi
+    fi
+
+    # Short-phase input must include Perm_* columns with NO kappa filtering.
+    if [ ! -f "${unfiltered_csv}" ]; then
+        local tmp_raw="results/bursts_${ticker}_baseline_k0tmp.csv"
+        local tmp_out="results/bursts_${ticker}_baseline_k0tmp_filtered.csv"
+
+        cp "${raw_csv}" "${tmp_raw}"
+        echo "INFO: Building baseline permanence for ${ticker} (kappa=0) -> ${unfiltered_csv}"
+        python3 src_py/compute_permanence.py \
+            "${tmp_raw}" \
+            "${ROOT}/open_all.csv" \
+            "${ROOT}/close_all.csv" \
+            --kappa 0
+        mv -f "${tmp_out}" "${unfiltered_csv}"
+        rm -f "${tmp_raw}"
+
+        if [ ! -s "${unfiltered_csv}" ]; then
+            echo "ERROR: kappa=0 permanence output empty: ${unfiltered_csv}" >&2
             exit 1
         fi
     fi
