@@ -20,6 +20,7 @@ python3 src_py/rank_sweep_params.py \
   --models "logreg_l2" \
   --results-root results \
   --min-coverage 4 \
+  --rank-objective variance_first \
   --top-k 5
 
 echo "2. Extracting top 5 configs..."
@@ -27,6 +28,6 @@ cut -d, -f2 results/sweep_rankings/global_top_configs.csv | tail -n +2 | head -n
 
 echo "3. Submitting final evaluation array..."
 # Submitting the 20-task array (4 tickers x 5 models)
-qsub -t 1-20 -v TICKERS="NVDA TSLA JPM MS",MODELS="et,rf,stacking,lgb_tuned,adaboost" eval_top_configs.sh
+qsub -t 1-20 -v TICKERS="NVDA TSLA JPM MS",MODELS="et rf stacking lgb_tuned adaboost" eval_top_configs.sh
 
 echo "Handoff complete."

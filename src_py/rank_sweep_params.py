@@ -38,6 +38,11 @@ def main():
     ap.add_argument("--min-coverage", type=int, default=4,
                     help="Minimum number of tickers required per (model, config, target)")
     ap.add_argument("--top-k", type=int, default=5)
+    ap.add_argument("--rank-objective", default="variance_first",
+                    choices=["variance_first", "auc_first", "balanced"],
+                    help="How to rank configs: variance_first (default), auc_first, or balanced")
+    ap.add_argument("--min-mean-auc", type=float, default=None,
+                    help="Optional floor on overall_mean_auc before ranking")
     args = ap.parse_args()
 
     tickers = [x.strip() for x in args.tickers.split(",") if x.strip()]
@@ -82,13 +87,29 @@ def main():
                   overall_mean_std=("std_auc", "mean"),
                   targets=("target", "nunique")))
 
+    if args.min_mean_auc is not None:
+        cfg = cfg[cfg["overall_mean_auc"] >= args.min_mean_auc].copy()
+
     # Write per-model files + console top-k.
     global_rows = []
     for m in models:
         mg = g[g["model"] == m].sort_values(["target", "mean_auc"], ascending=[True, False])
-        mc = cfg[cfg["model"] == m].sort_values(
-            ["overall_mean_auc", "overall_mean_std"], ascending=[False, True]
-        )
+        mc = cfg[cfg["model"] == m].copy()
+        if args.rank_objective == "variance_first":
+            mc = mc.sort_values(["overall_mean_std", "overall_mean_auc"], ascending=[True, False])
+        elif args.rank_objective == "auc_first":
+            mc = mc.sort_values(["overall_mean_auc", "overall_mean_std"], ascending=[False, True])
+        else:
+            # Balanced ranking with z-score normalization across this model's configs.
+            # Lower std and higher mean_auc are both rewarded.
+            if len(mc) > 1:
+                auc_z = (mc["overall_mean_auc"] - mc["overall_mean_auc"].mean()) / mc["overall_mean_auc"].std(ddof=0)
+                std_z = (mc["overall_mean_std"] - mc["overall_mean_std"].mean()) / mc["overall_mean_std"].std(ddof=0)
+            else:
+                auc_z = 0.0
+                std_z = 0.0
+            mc["balance_score"] = auc_z - std_z
+            mc = mc.sort_values(["balance_score", "overall_mean_auc"], ascending=[False, False])
         if mc.empty:
             continue
 
@@ -113,9 +134,11 @@ def main():
             })
 
     if global_rows:
-        gf = pd.DataFrame(global_rows).sort_values(
-            ["overall_mean_auc", "overall_mean_std"], ascending=[False, True]
-        )
+        gf = pd.DataFrame(global_rows)
+        if args.rank_objective == "variance_first":
+            gf = gf.sort_values(["overall_mean_std", "overall_mean_auc"], ascending=[True, False])
+        else:
+            gf = gf.sort_values(["overall_mean_auc", "overall_mean_std"], ascending=[False, True])
         gf.to_csv(out_root / "global_top_configs.csv", index=False)
         print("\nSaved:")
         print(f"  {out_root}")

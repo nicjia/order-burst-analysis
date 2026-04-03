@@ -113,6 +113,10 @@ def main():
     ap.add_argument("--min-train-months", type=int, default=3)
     ap.add_argument("--require-directional", action="store_true", help="Drop mixed bursts after post-classification")
     ap.add_argument("--min-rows", type=int, default=500, help="Skip configs with too few bursts")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="If all expected result JSONs exist for a config, reuse them and skip retraining")
+    ap.add_argument("--write-skipped-candidates", action="store_true",
+                    help="Also write candidate CSV for configs below --min-rows (default: do not write)")
 
     args = ap.parse_args()
     target_list = [t.strip() for t in args.target.split(",") if t.strip()]
@@ -120,13 +124,24 @@ def main():
         raise ValueError("No valid targets provided via --target")
 
     short_targets = {"cls_1m", "cls_3m", "cls_5m", "cls_10m", "reg_1m", "reg_3m", "reg_5m", "reg_10m"}
+    long_targets = {"cls_close", "cls_clop", "cls_clcl", "reg_close", "reg_clop", "reg_clcl"}
     has_short_horizon_target = any(t in short_targets for t in target_list)
+    has_long_horizon_target = any(t in long_targets for t in target_list)
 
     silence_values = parse_float_list(args.silence_values)
     min_vol_values = parse_int_list(args.min_vol_values)
     dir_thresh_values = parse_float_list(args.dir_thresh_values)
     vol_ratio_values = parse_float_list(args.vol_ratio_values)
     kappa_values = parse_float_list(args.kappa_values)
+
+    # kappa filtering is meaningful only for long-horizon targets.
+    # If short and long targets are mixed in one run, one shared candidate set
+    # cannot be simultaneously correct for both with nonzero kappa.
+    if has_short_horizon_target and has_long_horizon_target and any(k > 0 for k in kappa_values):
+        raise ValueError(
+            "Mixed short+long targets with nonzero --kappa-values are unsupported. "
+            "Run two sweeps (short targets with kappa=0, long targets with kappa grid)."
+        )
 
     outdir = Path(args.outdir)
     precompute_dir = outdir / "precompute"
@@ -192,9 +207,33 @@ def main():
                 f"s{s_tag}_v{min_vol}_d{dth}_r{vr}_k{effective_kappa}".replace(".", "p")
             )
             candidate_csv = candidates_dir / f"{args.ticker}_{config_tag}.csv"
-            filtered.to_csv(candidate_csv, index=False)
+            out_model_dir = model_dir / config_tag
+            out_model_dir.mkdir(parents=True, exist_ok=True)
+
+            expected_jsons = [out_model_dir / f"{args.model}__{tgt}.json" for tgt in target_list]
+
+            if args.skip_existing and all(p.exists() for p in expected_jsons):
+                rows_count = len(filtered)
+                for tgt, result_json in zip(target_list, expected_jsons):
+                    metric_name, metric_value = find_score(result_json)
+                    summary_rows.append({
+                        "ticker": args.ticker,
+                        "config": config_tag,
+                        "target": tgt,
+                        "silence": s,
+                        "min_vol": min_vol,
+                        "dir_thresh": dth,
+                        "vol_ratio": vr,
+                        "kappa": k,
+                        "rows": rows_count,
+                        "metric_name": metric_name,
+                        "metric_value": metric_value,
+                    })
+                continue
 
             if len(filtered) < args.min_rows:
+                if args.write_skipped_candidates:
+                    filtered.to_csv(candidate_csv, index=False)
                 summary_rows.append({
                     "ticker": args.ticker,
                     "config": config_tag,
@@ -209,8 +248,9 @@ def main():
                 })
                 continue
 
-            out_model_dir = model_dir / config_tag
-            out_model_dir.mkdir(parents=True, exist_ok=True)
+            # Persist trainable candidate sets; these are needed for top-config replay.
+            if not candidate_csv.exists():
+                filtered.to_csv(candidate_csv, index=False)
 
             run([
                 "python3", "src_py/train_model_zoo.py",

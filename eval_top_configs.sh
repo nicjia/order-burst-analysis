@@ -23,7 +23,7 @@ if [ -z "${SGE_TASK_ID:-}" ]; then
 fi
 
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
-MODELS=${MODELS:-"et,rf,stacking,lgb_tuned,adaboost"}
+MODELS=${MODELS:-"et rf stacking lgb_tuned adaboost"}
 TOP_CONFIGS_FILE=${TOP_CONFIGS_FILE:-"results/sweep_rankings/top5_configs.txt"}
 
 if [ ! -f "${TOP_CONFIGS_FILE}" ]; then
@@ -32,7 +32,11 @@ if [ ! -f "${TOP_CONFIGS_FILE}" ]; then
 fi
 
 read -r -a TICKER_ARR <<< "${TICKERS}"
-IFS=',' read -r -a MODEL_ARR <<< "${MODELS}"
+if [[ "${MODELS}" == *,* ]]; then
+  IFS=',' read -r -a MODEL_ARR <<< "${MODELS}"
+else
+  read -r -a MODEL_ARR <<< "${MODELS}"
+fi
 
 N_TICKERS=${#TICKER_ARR[@]}
 N_MODELS=${#MODEL_ARR[@]}
