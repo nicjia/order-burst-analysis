@@ -86,6 +86,17 @@ def find_score(result_json):
     return "Metric", None
 
 
+def write_summary(rows, output_path):
+    fieldnames = [
+        "ticker", "config", "target", "silence", "min_vol",
+        "dir_thresh", "vol_ratio", "kappa", "rows", "metric_name", "metric_value",
+    ]
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Efficient sweep: parse once per silence, filter/train many combos.")
     ap.add_argument("--stock-folder", required=True, help="Path to one stock folder with message CSVs")
@@ -151,6 +162,9 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
 
     summary_rows = []
+    summary_csv = outdir / "sweep_summary.csv"
+    progress_counter = 0
+    checkpoint_every = 5
 
     for s in silence_values:
         s_tag = str(s).replace(".", "p")
@@ -229,6 +243,9 @@ def main():
                         "metric_name": metric_name,
                         "metric_value": metric_value,
                     })
+                    progress_counter += 1
+                    if progress_counter % checkpoint_every == 0:
+                        write_summary(summary_rows, summary_csv)
                 continue
 
             if len(filtered) < args.min_rows:
@@ -246,6 +263,9 @@ def main():
                     "metric_name": "SKIP",
                     "metric_value": "",
                 })
+                progress_counter += 1
+                if progress_counter % checkpoint_every == 0:
+                    write_summary(summary_rows, summary_csv)
                 continue
 
             # Persist trainable candidate sets; these are needed for top-config replay.
@@ -278,6 +298,9 @@ def main():
                         "metric_name": "MISSING",
                         "metric_value": "",
                     })
+                    progress_counter += 1
+                    if progress_counter % checkpoint_every == 0:
+                        write_summary(summary_rows, summary_csv)
                     continue
 
                 metric_name, metric_value = find_score(result_json)
@@ -294,14 +317,11 @@ def main():
                     "metric_name": metric_name,
                     "metric_value": metric_value,
                 })
+                progress_counter += 1
+                if progress_counter % checkpoint_every == 0:
+                    write_summary(summary_rows, summary_csv)
 
-    summary_csv = outdir / "sweep_summary.csv"
-    with open(summary_csv, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(summary_rows[0].keys()) if summary_rows else [
-            "ticker", "config", "target", "silence", "min_vol", "dir_thresh", "vol_ratio", "kappa", "rows", "metric_name", "metric_value"
-        ])
-        writer.writeheader()
-        writer.writerows(summary_rows)
+    write_summary(summary_rows, summary_csv)
 
     valid_rows = [r for r in summary_rows if isinstance(r.get("metric_value"), (int, float))]
     if valid_rows:
