@@ -18,7 +18,7 @@ source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
 # Keep comma-delimited grids defined inside this script.
 # Passing comma lists via qsub -v can be split incorrectly by SGE.
 # If you need to change these, edit this file directly.
-TICKERS="NVDA TSLA JPM MS"
+TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 MODELS="logreg_l2"
 
 # Target split avoids mixing short+long in one call.
