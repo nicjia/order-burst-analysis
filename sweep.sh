@@ -1,9 +1,9 @@
 #!/bin/bash
 #$ -cwd
 #$ -j y
-#$ -o logs/sweep_$JOB_ID.out
-#$ -l h_data=32G,h_rt=12:00:00
-#$ -pe shared 8
+#$ -o logs/sweep_$JOB_ID_$TASK_ID.out
+#$ -l h_data=8G,h_rt=5:00:00
+#$ -pe shared 4
 
 set -Eeo pipefail
 
