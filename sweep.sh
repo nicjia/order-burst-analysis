@@ -30,12 +30,16 @@ VOL_RATIO_VALUES=${VOL_RATIO_VALUES:-"0.3,0.5"}
 KAPPA_SHORT=${KAPPA_SHORT:-"0.0"}
 # Long horizons: evaluate several kappa choices.
 KAPPA_LONG=${KAPPA_LONG:-"0.2,0.5,1.0"}
+MIN_ROWS=${MIN_ROWS:-500}
+REQUIRE_DIRECTIONAL=${REQUIRE_DIRECTIONAL:-1}
 
 echo "========== PARAMETER SWEEP =========="
 echo "Tickers: ${TICKERS}"
 echo "Models: ${MODELS}"
 echo "Short targets: ${SHORT_TARGETS}"
 echo "Long targets: ${LONG_TARGETS}"
+echo "Min rows: ${MIN_ROWS}"
+echo "Require directional: ${REQUIRE_DIRECTIONAL}"
 echo "====================================="
 
 IFS=',' read -ra MODEL_LIST <<< "${MODELS}"
@@ -61,7 +65,8 @@ for TICKER in ${TICKERS}; do
             --model "${M}" \
             --target "${SHORT_TARGETS}" \
             --workers "${NSLOTS:-8}" \
-            --require-directional
+            --min-rows "${MIN_ROWS}" \
+            $( [ "${REQUIRE_DIRECTIONAL}" = "1" ] && echo "--require-directional" )
 
         # Phase 2: long horizons (default kappa grid)
         python3 src_py/silence_optimized_sweep.py \
@@ -79,7 +84,8 @@ for TICKER in ${TICKERS}; do
             --model "${M}" \
             --target "${LONG_TARGETS}" \
             --workers "${NSLOTS:-8}" \
-            --require-directional
+            --min-rows "${MIN_ROWS}" \
+            $( [ "${REQUIRE_DIRECTIONAL}" = "1" ] && echo "--require-directional" )
     done
 done
 
