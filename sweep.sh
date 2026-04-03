@@ -37,10 +37,6 @@ KAPPA_LONG="0.0,0.2,0.5"
 MIN_ROWS=100
 REQUIRE_DIRECTIONAL=0
 
-# When running as an SGE array job, map each task to one (ticker, model, phase)
-# so sweeps parallelize cleanly across the cluster.
-PHASES=("short" "long")
-
 echo "========== PARAMETER SWEEP =========="
 echo "Tickers: ${TICKERS}"
 echo "Models: ${MODELS}"
@@ -64,6 +60,7 @@ run_one_phase() {
     local target_arg
     local kappa_arg
     local outdir
+    local cache_dir="${ROOT}/results/silence_sweep_${ticker}/${model}/shared_cache"
 
     if [ "${phase}" = "short" ]; then
         target_arg="${SHORT_TARGETS}"
@@ -83,6 +80,7 @@ run_one_phase() {
         --close "${ROOT}/close_all.csv" \
         --data-processor "${ROOT}/data_processor" \
         --outdir "${outdir}" \
+        --precompute-dir "${cache_dir}" \
         --silence-values "${SILENCE_VALUES}" \
         --min-vol-values "${MIN_VOL_VALUES}" \
         --dir-thresh-values "${DIR_THRESH_VALUES}" \
@@ -98,37 +96,26 @@ run_one_phase() {
 
 if [ -n "${SGE_TASK_ID:-}" ]; then
     read -r -a TICKER_ARR <<< "${TICKERS}"
-
-    CLEAN_MODELS=()
-    for MODEL in "${MODEL_LIST[@]}"; do
-        M=$(echo "${MODEL}" | xargs)
-        [ -z "${M}" ] && continue
-        CLEAN_MODELS+=("${M}")
-    done
-
     N_TICKERS=${#TICKER_ARR[@]}
-    N_MODELS=${#CLEAN_MODELS[@]}
-    N_PHASES=${#PHASES[@]}
-    TOTAL=$((N_TICKERS * N_MODELS * N_PHASES))
     IDX=$((SGE_TASK_ID - 1))
 
-    if [ "${IDX}" -lt 0 ] || [ "${IDX}" -ge "${TOTAL}" ]; then
-        echo "INFO: Task ${SGE_TASK_ID} out of range TOTAL=${TOTAL}; exiting."
+    if [ "${IDX}" -lt 0 ] || [ "${IDX}" -ge "${N_TICKERS}" ]; then
+        echo "INFO: Task ${SGE_TASK_ID} out of range; exiting."
         exit 0
     fi
 
-    TP=$((N_MODELS * N_PHASES))
-    TIDX=$((IDX / TP))
-    REM=$((IDX % TP))
-    MIDX=$((REM / N_PHASES))
-    PIDX=$((REM % N_PHASES))
+    TICKER=${TICKER_ARR[$IDX]}
+    echo "Assigning node to ticker=${TICKER}"
 
-    TICKER=${TICKER_ARR[$TIDX]}
-    MODEL=${CLEAN_MODELS[$MIDX]}
-    PHASE=${PHASES[$PIDX]}
+    for MODEL in "${MODEL_LIST[@]}"; do
+        M=$(echo "${MODEL}" | xargs)
+        [ -z "${M}" ] && continue
+        # Run phases sequentially on the same node so long reuses short cache.
+        run_one_phase "${TICKER}" "${M}" "short"
+        run_one_phase "${TICKER}" "${M}" "long"
+    done
 
-    run_one_phase "${TICKER}" "${MODEL}" "${PHASE}"
-    echo "Sweep task complete."
+    echo "Sweep task complete for ${TICKER}."
     exit 0
 fi
 

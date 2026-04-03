@@ -106,6 +106,8 @@ def main():
     ap.add_argument("--data-processor", default="./data_processor", help="Path to C++ binary")
     ap.add_argument("--workers", type=int, default=1, help="Parallel day workers for data_processor (-j)")
     ap.add_argument("--outdir", default="results/silence_sweep", help="Output root")
+    ap.add_argument("--precompute-dir", default=None,
+                    help="Optional shared cache dir for precompute/permanence files across phases")
 
     ap.add_argument("--silence-values", required=True, help="Comma list, e.g. 0.5,1,2")
     ap.add_argument("--min-vol-values", required=True, help="Comma list, e.g. 50,100,200")
@@ -155,7 +157,7 @@ def main():
         )
 
     outdir = Path(args.outdir)
-    precompute_dir = outdir / "precompute"
+    precompute_dir = Path(args.precompute_dir) if args.precompute_dir else (outdir / "precompute")
     candidates_dir = outdir / "candidates"
     model_dir = outdir / "models"
     for d in [outdir, precompute_dir, candidates_dir, model_dir]:
