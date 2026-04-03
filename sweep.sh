@@ -14,24 +14,28 @@ cd "${ROOT}"
 module load gcc/11.3.0 python/3.9.6
 source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
 
-TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
-MODELS=${MODELS:-"et,rf,logreg_l2,ridge_cls,sgd_hinge"}
+# NOTE:
+# Keep comma-delimited grids defined inside this script.
+# Passing comma lists via qsub -v can be split incorrectly by SGE.
+# If you need to change these, edit this file directly.
+TICKERS="NVDA TSLA JPM MS"
+MODELS="logreg_l2"
 
 # Target split avoids mixing short+long in one call.
 SHORT_TARGETS=${SHORT_TARGETS:-"cls_1m,cls_3m,cls_5m,cls_10m"}
 LONG_TARGETS=${LONG_TARGETS:-"cls_close,cls_clop,cls_clcl"}
 
-SILENCE_VALUES=${SILENCE_VALUES:-"0.5,1.0,2.0"}
-MIN_VOL_VALUES=${MIN_VOL_VALUES:-"50,100,200"}
-DIR_THRESH_VALUES=${DIR_THRESH_VALUES:-"0.7,0.8,0.9"}
-VOL_RATIO_VALUES=${VOL_RATIO_VALUES:-"0.3,0.5"}
+SILENCE_VALUES="0.5,1.0,2.0"
+MIN_VOL_VALUES="50,100,200"
+DIR_THRESH_VALUES="0.7,0.8,0.9"
+VOL_RATIO_VALUES="0.1,0.3,0.5"
 
 # Short horizons: kappa must be 0.
-KAPPA_SHORT=${KAPPA_SHORT:-"0.0"}
+KAPPA_SHORT="0.0"
 # Long horizons: evaluate several kappa choices.
-KAPPA_LONG=${KAPPA_LONG:-"0.2,0.5,1.0"}
-MIN_ROWS=${MIN_ROWS:-500}
-REQUIRE_DIRECTIONAL=${REQUIRE_DIRECTIONAL:-1}
+KAPPA_LONG="0.0,0.2,0.5"
+MIN_ROWS=100
+REQUIRE_DIRECTIONAL=0
 
 echo "========== PARAMETER SWEEP =========="
 echo "Tickers: ${TICKERS}"
@@ -43,6 +47,10 @@ echo "Require directional: ${REQUIRE_DIRECTIONAL}"
 echo "====================================="
 
 IFS=',' read -ra MODEL_LIST <<< "${MODELS}"
+EXTRA_FLAGS=()
+if [ "${REQUIRE_DIRECTIONAL}" = "1" ]; then
+    EXTRA_FLAGS+=(--require-directional)
+fi
 
 for TICKER in ${TICKERS}; do
     for MODEL in "${MODEL_LIST[@]}"; do
@@ -66,7 +74,7 @@ for TICKER in ${TICKERS}; do
             --target "${SHORT_TARGETS}" \
             --workers "${NSLOTS:-8}" \
             --min-rows "${MIN_ROWS}" \
-            $( [ "${REQUIRE_DIRECTIONAL}" = "1" ] && echo "--require-directional" )
+            "${EXTRA_FLAGS[@]}"
 
         # Phase 2: long horizons (default kappa grid)
         python3 src_py/silence_optimized_sweep.py \
@@ -85,7 +93,7 @@ for TICKER in ${TICKERS}; do
             --target "${LONG_TARGETS}" \
             --workers "${NSLOTS:-8}" \
             --min-rows "${MIN_ROWS}" \
-            $( [ "${REQUIRE_DIRECTIONAL}" = "1" ] && echo "--require-directional" )
+            "${EXTRA_FLAGS[@]}"
     done
 done
 
