@@ -37,7 +37,33 @@ def parse_int_list(text):
     return [int(x.strip()) for x in text.split(",") if x.strip()]
 
 
-def classify_and_filter(df, min_vol, dir_thresh, vol_ratio, kappa, require_directional):
+def compute_trailing_adv(df, window=14, min_periods=5):
+    """Compute trailing `window`-day Average Daily Volume per date.
+
+    Uses shift(1) so that today's ADV is based on the *previous* `window`
+    trading days only — no look-ahead bias.
+
+    Returns a Series indexed by Date with the trailing ADV (in shares).
+    Dates with fewer than `min_periods` history are NaN.
+    """
+    daily_vol = df.groupby("Date")["Volume"].sum().sort_index()
+    adv = daily_vol.rolling(window, min_periods=min_periods).mean().shift(1)
+    return adv
+
+
+def classify_and_filter(df, min_vol, dir_thresh, vol_ratio, kappa, require_directional,
+                        min_vol_per_burst=None):
+    """Post-filter bursts by volume, directionality, and kappa.
+
+    Parameters
+    ----------
+    min_vol : int or float
+        Flat absolute volume threshold (used when min_vol_per_burst is None).
+    min_vol_per_burst : pd.Series or None
+        Per-burst volume threshold indexed identically to *df*.  When provided
+        this overrides *min_vol* — each burst is compared against its own
+        ADV-derived threshold.
+    """
     out = df.copy()
 
     # Ensure required columns exist.
@@ -66,7 +92,11 @@ def classify_and_filter(df, min_vol, dir_thresh, vol_ratio, kappa, require_direc
     out.loc[directional_ok & buy_wins, "Direction"] = 1
     out.loc[directional_ok & (~buy_wins), "Direction"] = -1
 
-    mask = out["Volume"] >= min_vol
+    if min_vol_per_burst is not None:
+        # Fractional ADV: per-burst threshold
+        mask = out["Volume"] >= min_vol_per_burst
+    else:
+        mask = out["Volume"] >= min_vol
     if require_directional:
         mask &= out["Direction"] != 0
     if kappa > 0:
@@ -88,11 +118,11 @@ def find_score(result_json):
 
 def write_summary(rows, output_path):
     fieldnames = [
-        "ticker", "config", "target", "silence", "min_vol",
+        "ticker", "config", "target", "silence", "min_vol", "vol_frac",
         "dir_thresh", "vol_ratio", "kappa", "rows", "metric_name", "metric_value",
     ]
     with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -110,7 +140,12 @@ def main():
                     help="Optional shared cache dir for precompute/permanence files across phases")
 
     ap.add_argument("--silence-values", required=True, help="Comma list, e.g. 0.5,1,2")
-    ap.add_argument("--min-vol-values", required=True, help="Comma list, e.g. 50,100,200")
+    ap.add_argument("--min-vol-values", default=None, help="Comma list of absolute volume thresholds, e.g. 50,100,200")
+    ap.add_argument("--vol-frac-values", default=None,
+                    help="Comma list of ADV-fraction volume thresholds, e.g. 0.00001,0.0001,0.001. "
+                         "When provided, overrides --min-vol-values with per-burst trailing-14d ADV scaling.")
+    ap.add_argument("--adv-window", type=int, default=14,
+                    help="Rolling window (trading days) for ADV computation (default: 14)")
     ap.add_argument("--dir-thresh-values", required=True, help="Comma list, e.g. 0.8,0.9")
     ap.add_argument("--vol-ratio-values", required=True, help="Comma list, e.g. 0.3,0.5")
     ap.add_argument("--kappa-values", required=True, help="Comma list, e.g. 0,0.1,0.2")
@@ -136,13 +171,19 @@ def main():
     if not target_list:
         raise ValueError("No valid targets provided via --target")
 
+    # Validate volume arguments: exactly one of the two must be provided.
+    use_frac_vol = args.vol_frac_values is not None
+    if not use_frac_vol and args.min_vol_values is None:
+        raise ValueError("Provide either --min-vol-values or --vol-frac-values.")
+
     short_targets = {"cls_1m", "cls_3m", "cls_5m", "cls_10m", "reg_1m", "reg_3m", "reg_5m", "reg_10m"}
     long_targets = {"cls_close", "cls_clop", "cls_clcl", "reg_close", "reg_clop", "reg_clcl"}
     has_short_horizon_target = any(t in short_targets for t in target_list)
     has_long_horizon_target = any(t in long_targets for t in target_list)
 
     silence_values = parse_float_list(args.silence_values)
-    min_vol_values = parse_int_list(args.min_vol_values)
+    vol_frac_values = parse_float_list(args.vol_frac_values) if use_frac_vol else []
+    min_vol_values = parse_int_list(args.min_vol_values) if not use_frac_vol else []
     dir_thresh_values = parse_float_list(args.dir_thresh_values)
     vol_ratio_values = parse_float_list(args.vol_ratio_values)
     kappa_values = parse_float_list(args.kappa_values)
@@ -206,22 +247,51 @@ def main():
 
         base_df = pd.read_csv(perm_csv)
 
-        for min_vol, dth, vr, k in itertools.product(
-            min_vol_values, dir_thresh_values, vol_ratio_values, kappa_values
+        # ── Compute trailing ADV (only needed for fractional volume mode) ──
+        adv_series = None
+        if use_frac_vol:
+            adv_series = compute_trailing_adv(base_df, window=args.adv_window)
+            n_valid = adv_series.notna().sum()
+            print(f"  ADV ({args.adv_window}d trailing): {n_valid}/{len(adv_series)} dates with valid ADV")
+
+        # ── Build the volume grid ──
+        # In fractional mode we iterate over vol_frac_values;
+        # in static mode we iterate over min_vol_values.
+        vol_items = vol_frac_values if use_frac_vol else min_vol_values
+
+        for vol_param, dth, vr, k in itertools.product(
+            vol_items, dir_thresh_values, vol_ratio_values, kappa_values
         ):
             effective_kappa = 0.0 if has_short_horizon_target else k
+
+            # Determine per-burst volume thresholds.
+            min_vol_per_burst = None
+            display_min_vol = vol_param  # for summary CSV
+            if use_frac_vol:
+                # Map each burst's date → ADV, then multiply by fraction.
+                burst_adv = base_df["Date"].map(adv_series)
+                min_vol_per_burst = (vol_param * burst_adv).reindex(base_df.index)
+                # Drop bursts on dates without sufficient ADV history.
+                valid_adv_mask = min_vol_per_burst.notna()
+                display_min_vol = round(min_vol_per_burst[valid_adv_mask].mean(), 1) if valid_adv_mask.any() else 0
+
             filtered = classify_and_filter(
                 base_df,
-                min_vol=min_vol,
+                min_vol=vol_param if not use_frac_vol else 0,
                 dir_thresh=dth,
                 vol_ratio=vr,
                 kappa=effective_kappa,
                 require_directional=args.require_directional,
+                min_vol_per_burst=min_vol_per_burst,
             )
 
-            config_tag = (
-                f"s{s_tag}_v{min_vol}_d{dth}_r{vr}_k{effective_kappa}".replace(".", "p")
-            )
+            # Build config tag.
+            if use_frac_vol:
+                vf_tag = f"{vol_param}".replace(".", "p")
+                config_tag = f"s{s_tag}_vf{vf_tag}_d{dth}_r{vr}_k{effective_kappa}".replace(".", "p")
+            else:
+                config_tag = f"s{s_tag}_v{vol_param}_d{dth}_r{vr}_k{effective_kappa}".replace(".", "p")
+
             candidate_csv = candidates_dir / f"{args.ticker}_{config_tag}.csv"
             out_model_dir = model_dir / config_tag
             out_model_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +307,8 @@ def main():
                         "config": config_tag,
                         "target": tgt,
                         "silence": s,
-                        "min_vol": min_vol,
+                        "min_vol": display_min_vol,
+                        "vol_frac": vol_param if use_frac_vol else "",
                         "dir_thresh": dth,
                         "vol_ratio": vr,
                         "kappa": k,
@@ -257,7 +328,8 @@ def main():
                     "ticker": args.ticker,
                     "config": config_tag,
                     "silence": s,
-                    "min_vol": min_vol,
+                    "min_vol": display_min_vol,
+                    "vol_frac": vol_param if use_frac_vol else "",
                     "dir_thresh": dth,
                     "vol_ratio": vr,
                     "kappa": k,
@@ -292,7 +364,8 @@ def main():
                         "config": config_tag,
                         "target": tgt,
                         "silence": s,
-                        "min_vol": min_vol,
+                        "min_vol": display_min_vol,
+                        "vol_frac": vol_param if use_frac_vol else "",
                         "dir_thresh": dth,
                         "vol_ratio": vr,
                         "kappa": k,
@@ -311,7 +384,8 @@ def main():
                     "config": config_tag,
                     "target": tgt,
                     "silence": s,
-                    "min_vol": min_vol,
+                    "min_vol": display_min_vol,
+                    "vol_frac": vol_param if use_frac_vol else "",
                     "dir_thresh": dth,
                     "vol_ratio": vr,
                     "kappa": k,

@@ -35,6 +35,9 @@ def main():
     ap.add_argument("--tickers", default="NVDA,TSLA,JPM,MS")
     ap.add_argument("--models", default="et,rf,stacking,lgb_tuned,adaboost")
     ap.add_argument("--results-root", default="results")
+    ap.add_argument("--sweep-prefix", default="silence_sweep",
+                    help="Directory prefix under results-root: 'silence_sweep' (static) or "
+                         "'silence_sweep_frac' (fractional ADV). Default: silence_sweep.")
     ap.add_argument("--min-coverage", type=int, default=4,
                     help="Minimum number of tickers required per (model, config, target)")
     ap.add_argument("--top-k", type=int, default=5)
@@ -52,8 +55,8 @@ def main():
     frames = []
     for t in tickers:
         for m in models:
-            short_csv = root / f"silence_sweep_{t}" / m / "short" / "sweep_summary.csv"
-            long_csv = root / f"silence_sweep_{t}" / m / "long" / "sweep_summary.csv"
+            short_csv = root / f"{args.sweep_prefix}_{t}" / m / "short" / "sweep_summary.csv"
+            long_csv = root / f"{args.sweep_prefix}_{t}" / m / "long" / "sweep_summary.csv"
             frames.append(load_one_csv(short_csv, t, m, "short"))
             frames.append(load_one_csv(long_csv, t, m, "long"))
 
