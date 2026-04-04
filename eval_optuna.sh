@@ -39,6 +39,10 @@ MODELS=${MODELS:-"lgb_tuned xgb_tuned"}
 SWEEP_PREFIX=${SWEEP_PREFIX:-"silence_sweep"}
 TOP_CONFIGS_FILE=${TOP_CONFIGS_FILE:-"results/sweep_rankings/top5_configs.txt"}
 
+# Reduced target set — expand on final winning configs.
+SHORT_TARGETS="cls_1m,cls_10m"
+LONG_TARGETS="cls_close"
+
 if [ ! -f "${TOP_CONFIGS_FILE}" ]; then
   echo "ERROR: Missing TOP_CONFIGS_FILE=${TOP_CONFIGS_FILE}" >&2
   exit 1
@@ -102,15 +106,17 @@ for cfg in "${CONFIGS[@]}"; do
     OUTDIR="results/optuna_eval/${TICKER}/${MODEL}/${cfg}/${phase}"
     mkdir -p "${OUTDIR}"
 
-    # Check if already completed (skip-existing logic)
+    # Use explicit target lists instead of phase aliases
     if [ "${phase}" = "short" ]; then
-      EXPECTED_TARGETS="cls_1m cls_3m cls_5m cls_10m"
+      TARGET_ARG="${SHORT_TARGETS}"
+      IFS=',' read -ra EXPECTED_TGTS <<< "${SHORT_TARGETS}"
     else
-      EXPECTED_TARGETS="cls_close cls_clop cls_clcl"
+      TARGET_ARG="${LONG_TARGETS}"
+      IFS=',' read -ra EXPECTED_TGTS <<< "${LONG_TARGETS}"
     fi
 
     ALL_EXIST=true
-    for tgt in ${EXPECTED_TARGETS}; do
+    for tgt in "${EXPECTED_TGTS[@]}"; do
       if [ ! -f "${OUTDIR}/${MODEL}__${tgt}.json" ]; then
         ALL_EXIST=false
         break
@@ -133,7 +139,7 @@ for cfg in "${CONFIGS[@]}"; do
 
     python3 src_py/train_model_zoo.py "${CAND}" \
       --model "${MODEL}" \
-      --target "${phase}" \
+      --target "${TARGET_ARG}" \
       --features extended \
       --outdir "${OUTDIR}" \
       --min-train-months 3

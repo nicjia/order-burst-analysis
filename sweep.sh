@@ -22,18 +22,18 @@ TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 MODELS="logreg_l2"
 
 # Target split avoids mixing short+long in one call.
-SHORT_TARGETS=${SHORT_TARGETS:-"cls_1m,cls_3m,cls_5m,cls_10m"}
-LONG_TARGETS=${LONG_TARGETS:-"cls_close,cls_clop,cls_clcl"}
+# Reduced target set for fast sweep — expand to all targets on winning configs.
+SHORT_TARGETS=${SHORT_TARGETS:-"cls_1m,cls_10m"}
+LONG_TARGETS=${LONG_TARGETS:-"cls_close"}
 
 SILENCE_VALUES="0.5,1.0,2.0"
-MIN_VOL_VALUES="50,100,200, 1000"
+MIN_VOL_VALUES="50,100,200,1000"
 DIR_THRESH_VALUES="0.7,0.8,0.9"
 VOL_RATIO_VALUES="0.1,0.3,0.5"
 
-# Short horizons: kappa must be 0.
+# Kappa = 0 only for sweep phase (expand on winning configs later).
 KAPPA_SHORT="0.0"
-# Long horizons: evaluate several kappa choices.
-KAPPA_LONG="0.0,0.2,0.5"
+KAPPA_LONG="0.0"
 MIN_ROWS=100
 REQUIRE_DIRECTIONAL=0
 

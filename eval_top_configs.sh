@@ -27,6 +27,10 @@ TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 MODELS=${MODELS:-"et rf stacking lgb_tuned adaboost"}
 TOP_CONFIGS_FILE=${TOP_CONFIGS_FILE:-"results/sweep_rankings/top5_configs.txt"}
 
+# Reduced target set — expand on final winning configs.
+SHORT_TARGETS="cls_1m,cls_10m"
+LONG_TARGETS="cls_close"
+
 if [ ! -f "${TOP_CONFIGS_FILE}" ]; then
   echo "ERROR: Missing TOP_CONFIGS_FILE=${TOP_CONFIGS_FILE}" >&2
   exit 1
@@ -85,9 +89,14 @@ for cfg in "${CONFIGS[@]}"; do
     mkdir -p "${OUTDIR}"
 
     echo "Running cfg=${cfg} phase=${phase}"
+    if [ "${phase}" = "short" ]; then
+      TARGET_ARG="${SHORT_TARGETS}"
+    else
+      TARGET_ARG="${LONG_TARGETS}"
+    fi
     python3 src_py/train_model_zoo.py "${CAND}" \
       --model "${MODEL}" \
-      --target "${phase}" \
+      --target "${TARGET_ARG}" \
       --features extended \
       --outdir "${OUTDIR}" \
       --min-train-months 3
