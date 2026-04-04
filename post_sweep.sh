@@ -4,8 +4,6 @@
 #$ -o logs/post_sweep_$JOB_ID.out
 #$ -l h_data=4G,h_rt=1:00:00
 
-set -Eeo pipefail
-
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
@@ -13,6 +11,8 @@ cd "${ROOT}"
 . /u/local/Modules/default/init/bash
 module load gcc/11.3.0 python/3.9.6
 source "${ROOT}/.venv/bin/activate"
+
+set -Eeo pipefail
 
 echo "1. Ranking parameter sets..."
 python3 src_py/rank_sweep_params.py \
