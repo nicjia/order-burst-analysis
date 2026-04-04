@@ -70,3 +70,4 @@ comp.py
 reg_analysis.py
 *.png
 notes.txt
+*.out
