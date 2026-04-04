@@ -2,10 +2,8 @@
 #$ -cwd
 #$ -j y
 #$ -o logs/sweep_$JOB_ID_$TASK_ID.out
-#$ -l h_data=8G,h_rt=5:00:00
+#$ -l h_data=8G,h_rt=24:00:00
 #$ -pe shared 4
-
-set -Eeo pipefail
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
@@ -13,6 +11,8 @@ cd "${ROOT}"
 . /u/local/Modules/default/init/bash
 module load gcc/11.3.0 python/3.9.6
 source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
+
+set -Eeo pipefail
 
 # NOTE:
 # Keep comma-delimited grids defined inside this script.
