@@ -477,6 +477,8 @@ def _needs_scaling(model_key):
 def _needs_subsample(model_key):
     """Models that are too slow for full data — subsample training set."""
     LIMITS = {
+        'logreg_l2': 500_000,
+        'logreg_l1': 500_000,
         'svm_rbf': 30_000,
         'knn': 80_000,
         'knn_reg': 200_000,
