@@ -15,11 +15,11 @@ source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
 set -Eeo pipefail
 
 TICKERS=(NVDA TSLA JPM MS)
-TARGET="cls_10m"
+TARGETS=("cls_1m" "cls_3m" "cls_5m" "cls_10m" "cls_close" "cls_clop" "cls_clcl")
 TRIALS=100
 
 echo "========== OPTUNA PHYSICAL PARAMETER SEARCH =========="
-echo "Target: ${TARGET}"
+echo "Targets: ${TARGETS[*]}"
 echo "Trials: ${TRIALS}"
 echo "======================================================"
 
@@ -36,10 +36,14 @@ else
 fi
 
 echo "Running ticker=${TICKER}"
-python3 src_py/optuna_physical_sweep.py \
-    --ticker "${TICKER}" \
-    --target "${TARGET}" \
-    --trials "${TRIALS}"
+
+for TARGET in "${TARGETS[@]}"; do
+    echo "[Target: ${TARGET}]"
+    python3 src_py/optuna_physical_sweep.py \
+        --ticker "${TICKER}" \
+        --target "${TARGET}" \
+        --trials "${TRIALS}"
+done
 
 echo "Completed: ${TICKER} at $(date)"
 exit 0
