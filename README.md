@@ -66,11 +66,21 @@ To simulate a trading strategy without temporal leakage, the script establishes 
 
 ## Core File Manifest
 
+### Data Generation (C++)
 - **main.cpp:** Entry point for the C++ parser. Handles multithreading, day-file discovery, and rolling market state snapshots.
 - **burst.cpp / burst.h:** Implements the deterministic clustering algorithm to group order submissions into discrete, directional blocks of trading intent.
-- **orderbook.cpp / orderbook.h:** Rebuilds the limit order book state from raw LOBSTER messages (Submission, Cancel, Deletion, Execution).
-- **pivot_returns.py:** Aggregates yearly CRSP files into fast-lookup pivot tables for overnight target variables.
-- **compute_permanence.py:** Calculates the arcsinh permanence regression targets and the Db short-horizon decay metric.
-- **regression_eval.py:** Runs the walk-forward XGBoost evaluation, separating intraday from long-horizon logic to ensure strictly ex-ante predictions.
-- **train_model_zoo.py:** A larger benchmarking suite containing roughly 20 ML algorithms (LightGBM, Random Forest, Ridge, etc.) for broader model exploration.
-- **regress.sh:** The grid engine submission script that orchestrates the C++, permanence calculation, and regression pipeline across multiple tickers and configurations.
+- **orderbook.cpp / orderbook.h:** Rebuilds the limit order book state from raw LOBSTER messages.
+
+### Python Engines (`src_py/`)
+- **silence_optimized_sweep.py:** The primary filtering engine. Parses datasets, caches silence thresholds, and rapidly post-filters frames dataframe logic to define bursts.
+- **train_model_zoo.py:** The core machine learning engine. Executes strict walk-forward cross-validation preventing time-leakage. Contains Optuna execution bindings.
+- **optuna_physical_sweep.py:** Continuous optimization engine. Pre-loads un-filtered datasets into caching RAM to run high-speed Bayesian parameter tuning over optimal physical rules ($v$, $d$, $r$) instead of relying entirely on disk IO grid searching.
+- **analyze_partial_sweeps.py / analyze_optuna_params.py:** Analytics aggregation scripts used to surface universally robust patterns and hyperparameters from array job outputs.
+- **compute_permanence.py:** Utility to append inherently forward-looking decay measures (e.g. D_b) prior to trailing walk-forward models. 
+- **pivot_returns.py:** Aggregates raw CRSP files into fast-lookup pivot tables for overnight target variables.
+
+### Bash Execution Wrappers (`.sh`)
+- **sweep.sh:** Standard absolute-volume tracking brute-force array grid job.
+- **sweep_frac.sh:** Fractional variation of array grid applying parameters dynamically as a percentage of a stock's trailing 14-day Average Daily Volume.
+- **eval_optuna_physical.sh:** Array grid harnessing the fast `optuna_physical_sweep.py` Bayesian engine memory structures for optimizing dataset definitions.
+- **eval_optuna_direct.sh:** Uses Optuna specifically for parameterizing the ML hyperparameters (e.g. LightGBM node depth) across the globally consistent `s2p0` locked baseline.
