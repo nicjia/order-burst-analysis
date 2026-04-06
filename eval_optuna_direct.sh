@@ -33,7 +33,7 @@ if [ -z "${SGE_TASK_ID:-}" ]; then
 fi
 
 TICKERS=(NVDA TSLA JPM MS)
-SILENCE_TAGS=(s0p5 s1p0 s2p0)
+SILENCE_TAGS=(s2p0)
 MODELS="lgb_tuned xgb_tuned"
 TARGETS="cls_1m,cls_10m,cls_close"
 

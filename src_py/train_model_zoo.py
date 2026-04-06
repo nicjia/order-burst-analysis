@@ -1167,6 +1167,9 @@ def run_single_model(df, feat_cols, target_key, model_key, splits, outdir):
         metrics['month'] = month_label
         metrics['n_train'] = len(X_train_fit)
         metrics['n_test'] = len(y_test)
+        if hasattr(model, 'best_params') and model.best_params:
+            # Need to convert numpy types to native types for JSON serialization if present, but optuna returns float/int.
+            metrics['best_params'] = model.best_params
         fold_results.append(metrics)
 
         # Progress
