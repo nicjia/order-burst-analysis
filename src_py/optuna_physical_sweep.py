@@ -229,6 +229,10 @@ def main():
             
         print(f"Loading {tag} cached data from {path}...")
         df = pd.read_csv(path)
+        
+        df['DateCol'] = pd.to_datetime(df['Date'].astype(str), format='%Y%m%d')
+        df['Month'] = df['DateCol'].dt.strftime('%Y-%m')
+        
         df_cache[tag] = df
         
         print(f"Computing 14d trailing ADV for {tag}...")
