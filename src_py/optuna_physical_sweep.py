@@ -230,7 +230,7 @@ def main():
         print(f"Loading {tag} cached data from {path}...")
         df = pd.read_csv(path)
         
-        df['DateCol'] = pd.to_datetime(df['Date'].astype(str), format='%Y%m%d')
+        df['DateCol'] = pd.to_datetime(df['Date'])
         df['Month'] = df['DateCol'].dt.strftime('%Y-%m')
         
         df_cache[tag] = df
