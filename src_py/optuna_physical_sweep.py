@@ -108,9 +108,9 @@ def get_features(df, target_key):
     return X, feat_available
 
 
-def objective(trial, ticker, target_key, min_rows_thresh):
+def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
     # ── 1. Suggest Physical Parameters ──
-    silence_tag = trial.suggest_categorical("silence_tag", ["s0p5", "s1p0", "s2p0"])
+    silence_tag = fixed_silence
     
     # 0.00001 (0.001%) to 0.005 (0.5%) of 14d trailing ADV
     vol_frac = trial.suggest_float("vol_frac", 0.00001, 0.005, log=True)
@@ -242,31 +242,36 @@ def main():
         
     print(f"\nStarting Bayesian Optimization...")
     
-    study = optuna.create_study(direction="maximize", study_name=f"{args.ticker}_phys_sweep")
-    obj = lambda trial: objective(trial, args.ticker, args.target, min_rows_thresh=100)
-    
-    study.optimize(obj, n_trials=args.trials, show_progress_bar=True)
-    
+    tags = ["s0p5", "s1p0", "s2p0"]
     outdir = Path(f"results/optuna_physical/{args.ticker}")
     outdir.mkdir(parents=True, exist_ok=True)
     
-    res = {
-        "ticker": args.ticker,
-        "target": args.target,
-        "best_auc": float(study.best_value),
-        "best_params": study.best_params
-    }
-    
-    out_file = outdir / f"best_physical_params_{args.target}.json"
-    with open(out_file, "w") as f:
-        json.dump(res, f, indent=4)
+    for tag in tags:
+        print(f"\n--- OPTIMIZING {args.target} exactly for {tag} ---")
+        study = optuna.create_study(direction="maximize", study_name=f"{args.ticker}_phys_sweep_{tag}")
+        obj = lambda trial: objective(trial, args.ticker, args.target, tag, min_rows_thresh=100)
         
-    print(f"\nOptimization Complete for {args.ticker} -> {args.target}!")
-    print(f"Best AUC:    {study.best_value:.4f}")
-    print(f"Best Params:")
-    for k, v in study.best_params.items():
-        print(f"  {k}: {v}")
-    print(f"\nResults saved to: {out_file}")
+        # Turn off progress bar so individual [I 2026...] trial strings go safely to .out logs
+        study.optimize(obj, n_trials=args.trials, show_progress_bar=False)
+        
+        res = {
+            "ticker": args.ticker,
+            "target": args.target,
+            "best_auc": float(study.best_value),
+            "best_params": study.best_params
+        }
+        # Safely insert the fixed silence tag into the payload for the JSON parser
+        res["best_params"]["silence_tag"] = tag
+        
+        out_file = outdir / f"best_physical_params_{args.target}_{tag}.json"
+        with open(out_file, "w") as f:
+            json.dump(res, f, indent=4)
+            
+        print(f"[{tag}] Best AUC: {study.best_value:.4f}")
+        for k, v in study.best_params.items():
+            print(f"  {k}: {v}")
+            
+    print(f"\nOptimization Complete for {args.ticker} -> {args.target} over all silence bounds!")
 
 if __name__ == "__main__":
     main()
