@@ -138,6 +138,10 @@ def main():
                         help="Exit-side spread multiplier (0.5=half spread at exit)")
     parser.add_argument("--execution-mode", choices=["label_proxy", "burst_stream"], default="burst_stream",
                         help="label_proxy uses permanence labels for realized edge; burst_stream uses event-time round-trip fills")
+    parser.add_argument("--signal-mode", choices=["percentile", "cost_aware"], default="percentile",
+                        help="Trade trigger mode: percentile thresholds or cost-aware edge gating")
+    parser.add_argument("--cost-buffer-mult", type=float, default=1.0,
+                        help="Safety multiplier for spread cost in cost_aware mode (1.0 means edge must exceed estimated costs)")
     parser.add_argument("--mid-col", default="EndPrice",
                         help="Proxy mid-price column for burst_stream fills (default EndPrice)")
     parser.add_argument("--horizon-minutes", type=float, default=None,
@@ -221,6 +225,7 @@ def main():
         print(f"Position sizing: fraction of burst volume = {args.position_size_mult}")
     print(f"Reported PnL space: {args.pnl_space}")
     print(f"Execution mode: {args.execution_mode}")
+    print(f"Signal mode: {args.signal_mode}")
     print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
@@ -332,7 +337,7 @@ def main():
         # 2. Predict today's permanence identically blind
         preds = model.predict(X_day_s)
         
-        # 3. Calculate Dynamic Entry Thresholds (75th / 25th)
+        # 3. Calculate dynamic thresholds only for percentile trigger mode.
         current_long_thresh = np.percentile(recent_predictions, 75)
         current_short_thresh = np.percentile(recent_predictions, 25)
         
@@ -364,20 +369,39 @@ def main():
                     else:
                         day_pnl += np.arcsinh(net_edge_raw)
 
+            burst_vol_i = float(vol_day[i])
+            qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
+
             side = 0
-            if pred > current_long_thresh:
-                side = 1
-                total_longs += 1
-                total_trades += 1
-            elif pred < current_short_thresh:
-                side = -1
-                total_shorts += 1
+            if args.signal_mode == "percentile":
+                if pred > current_long_thresh:
+                    side = 1
+                elif pred < current_short_thresh:
+                    side = -1
+            else:
+                # Cost-aware trigger: use predicted per-share move and require it to clear estimated round-trip spread costs.
+                pred_raw = np.sinh(pred)
+                pred_move_per_share = pred_raw / max(burst_vol_i, 1e-12)
+                spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
+                spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
+                per_share_cost = (
+                    args.spread_multiplier * spread_entry_val
+                    + args.spread_exit_multiplier * spread_exit_val
+                )
+                gate = args.cost_buffer_mult * per_share_cost
+                if pred_move_per_share > gate:
+                    side = 1
+                elif pred_move_per_share < -gate:
+                    side = -1
+
+            if side != 0:
+                if side > 0:
+                    total_longs += 1
+                else:
+                    total_shorts += 1
                 total_trades += 1
 
             if side != 0:
-                burst_vol_i = float(vol_day[i])
-                qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
-
                 if args.execution_mode == "label_proxy":
                     # permanence label encodes approx. burst_volume * price_move; convert to per-share move.
                     gross_edge_raw = np.sinh(y_day[i])
@@ -437,10 +461,14 @@ def main():
         # Progress timeline every ~1 month (20 trading days)
         if day_idx % 20 == 0:
             day_str = str(day).split()[0]
+            if args.signal_mode == "percentile":
+                trigger_info = f"Rolling Thresholds L>{current_long_thresh:.3f} S<{current_short_thresh:.3f}"
+            else:
+                trigger_info = f"CostAware buffer={args.cost_buffer_mult:.2f}"
             print(f"[{day_str}] Walk-Forward Day {day_idx}/{len(remaining_days)} "
                   f"| CumPnL: {cum_pnl_tracker:7.3f} "
                   f"| Trades Executed: {total_trades:5d} "
-                  f"| Rolling Thresholds L>{current_long_thresh:.3f} S<{current_short_thresh:.3f}") 
+                  f"| {trigger_info}") 
 
     # 6. CALCULATE SHARPE & PNL STATISTICS
     daily_pnls = np.array(daily_pnls)
