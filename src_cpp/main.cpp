@@ -105,6 +105,26 @@ double lookup_mid(const std::vector<std::pair<double, double>>& snaps, double ta
     return it->second;
 }
 
+struct BboSnapshot {
+    double time;
+    double bid;
+    double ask;
+};
+
+// Binary-search the BBO snapshot timeline for bid/ask at (or just before) target_time.
+std::pair<double, double> lookup_bbo(const std::vector<BboSnapshot>& snaps, double target_time) {
+    if (snaps.empty()) return {0.0, 0.0};
+    if (target_time <= snaps.front().time) return {snaps.front().bid, snaps.front().ask};
+    if (target_time >= snaps.back().time)  return {snaps.back().bid, snaps.back().ask};
+
+    auto it = std::upper_bound(
+        snaps.begin(), snaps.end(), target_time,
+        [](double t, const BboSnapshot& p) { return t < p.time; });
+
+    if (it != snaps.begin()) --it;
+    return {it->bid, it->ask};
+}
+
 // Scan mid-price snapshots to find the most extreme price within [start_time, start_time + tau_max].
 // This is the true forward-looking PeakImpact defined by the proposal.
 double find_peak_price(const std::vector<std::pair<double, double>>& snaps,
@@ -158,6 +178,8 @@ struct BurstRecord {
     std::string date;
     Burst burst;
     double close_mid;
+    double end_bid;
+    double end_ask;
     double mid_1m;      // mid at end_time + 60 s
     double mid_3m;      // mid at end_time + 180 s
     double mid_5m;      // mid at end_time + 300 s
@@ -267,7 +289,7 @@ int main(int argc, char* argv[]) {
     }
     out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,TradeCount,"
         << "BuyCount,SellCount,BuyVolume,SellVolume,BuyRatio,SellRatio,MinMaxVolRatio,D_b,"
-        << "StartPrice,EndPrice,PeakPrice,CloseMid,"
+        << "StartPrice,EndPrice,PeakPrice,CloseMid,EndBid,EndAsk,"
         << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
         << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
         << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
@@ -297,6 +319,8 @@ int main(int argc, char* argv[]) {
         // Used after the day loop for forward-return lookups.
         std::vector<std::pair<double, double>> mid_snapshots;
         mid_snapshots.reserve(500000);
+        std::vector<BboSnapshot> bbo_snapshots;
+        bbo_snapshots.reserve(500000);
 
         // ── Rolling statistics accumulators ──────────────────
         // (a) Mid-return ring buffer for 60-second realized volatility
@@ -389,7 +413,7 @@ int main(int argc, char* argv[]) {
 
             // 1. ALWAYS update the order book — pre-open messages
             //    rebuild the full visible book before RTH opens.
-            book.process_message(msg);
+            bool bbo_changed = book.process_message(msg);
 
             // 2. Track mid-price (only when book has both sides).
             //    We record snapshots even outside RTH so that
@@ -400,6 +424,13 @@ int main(int argc, char* argv[]) {
                 if (new_mid != current_mid) {
                     current_mid = new_mid;
                     mid_snapshots.push_back({msg.time, current_mid});
+                }
+                if (bbo_changed) {
+                    bbo_snapshots.push_back({
+                        msg.time,
+                        (double)book.get_best_bid() / 10000.0,
+                        (double)book.get_best_ask() / 10000.0,
+                    });
                 }
             }
 
@@ -460,6 +491,9 @@ int main(int argc, char* argv[]) {
             rec.date      = day_res.date;
             rec.burst     = b;
             rec.close_mid = close_mid;
+            auto [end_bid, end_ask] = lookup_bbo(bbo_snapshots, b.end_time);
+            rec.end_bid   = end_bid;
+            rec.end_ask   = end_ask;
             rec.mid_1m    = lookup_mid(mid_snapshots, b.end_time + 60.0);
             rec.mid_3m    = lookup_mid(mid_snapshots, b.end_time + 180.0);
             rec.mid_5m    = lookup_mid(mid_snapshots, b.end_time + 300.0);
@@ -503,6 +537,7 @@ int main(int argc, char* argv[]) {
                     << std::setprecision(4)
                     << b.start_price << "," << b.end_price << "," << b.peak_price << ","
                     << rec.close_mid << ","
+                    << rec.end_bid << "," << rec.end_ask << ","
                     << rec.mid_1m << "," << rec.mid_3m << ","
                     << rec.mid_5m << "," << rec.mid_10m << ","
                     << std::setprecision(6)
