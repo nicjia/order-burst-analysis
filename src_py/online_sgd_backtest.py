@@ -144,6 +144,10 @@ def main():
                         help="Hold horizon for burst_stream mode. If omitted, inferred from target (e.g., reg_10m -> 10)")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
+    parser.add_argument("--position-mode", choices=["fraction", "shares"], default="fraction",
+                        help="Position sizing: fraction of burst volume or fixed shares per trade")
+    parser.add_argument("--shares-per-trade", type=float, default=1.0,
+                        help="Fixed shares per trade when --position-mode=shares")
     parser.add_argument("--pnl-space", choices=["raw", "transformed"], default="raw",
                         help="Space used for reported PnL/Sharpe. raw is dollar-like; transformed uses arcsinh compression")
     parser.add_argument("--adaptive-scaler", action="store_true",
@@ -211,7 +215,10 @@ def main():
             )
     else:
         print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
-    print(f"Position size multiplier: {args.position_size_mult}")
+    if args.position_mode == "shares":
+        print(f"Position sizing: fixed shares per trade = {args.shares_per_trade}")
+    else:
+        print(f"Position sizing: fraction of burst volume = {args.position_size_mult}")
     print(f"Reported PnL space: {args.pnl_space}")
     print(f"Execution mode: {args.execution_mode}")
     print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
@@ -368,20 +375,24 @@ def main():
                 total_trades += 1
 
             if side != 0:
+                burst_vol_i = float(vol_day[i])
+                qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
+
                 if args.execution_mode == "label_proxy":
+                    # permanence label encodes approx. burst_volume * price_move; convert to per-share move.
                     gross_edge_raw = np.sinh(y_day[i])
-                    signed_edge_raw = gross_edge_raw if side > 0 else -gross_edge_raw
-                    signed_edge_raw *= args.position_size_mult
+                    edge_per_share = gross_edge_raw / max(burst_vol_i, 1e-12)
+                    signed_edge_raw = side * qty * edge_per_share
 
                     spread_cost_raw = 0.0
                     if use_spread_cost:
                         spread_entry_val = max(0.0, float(spread_entry_day[i]))
                         spread_exit_val = max(0.0, float(spread_exit_day[i]))
                         entry_cost_raw = (
-                            args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_entry_val
+                            args.spread_multiplier * qty * spread_entry_val
                         )
                         exit_cost_raw = (
-                            args.spread_exit_multiplier * args.position_size_mult * float(vol_day[i]) * spread_exit_val
+                            args.spread_exit_multiplier * qty * spread_exit_val
                         )
                         spread_cost_raw = entry_cost_raw + exit_cost_raw
                         total_entry_spread_cost_raw += entry_cost_raw
@@ -397,7 +408,6 @@ def main():
                 else:
                     # Open a round-trip trade now; realize PnL when a later burst reaches horizon.
                     entry_mid = float(mid_day[i])
-                    qty = args.position_size_mult * float(vol_day[i])
                     spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
                     entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
                     total_entry_spread_cost_raw += entry_cost_raw
