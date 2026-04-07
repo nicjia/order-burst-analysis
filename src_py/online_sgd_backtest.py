@@ -173,7 +173,9 @@ def main():
             recent_predictions.append(bp)
     
     # ── THE CORE ENGINE ──
-    for day in remaining_days:
+    cum_pnl_tracker = 0.0
+
+    for day_idx, day in enumerate(remaining_days):
         day_mask = (filtered['DateCol'] == day).values
         if day_mask.sum() == 0:
             continue
@@ -195,27 +197,30 @@ def main():
         # 4. Trigger simulated entries blindly strictly if they hit conviction thresholds
         for i, pred in enumerate(preds):
             if pred > current_long_thresh:
-                # Agent Went LONG
-                # The true y_day inherently reflects the identical scaled permanence sign
                 day_pnl += y_day[i] 
                 total_longs += 1
                 total_trades += 1
             elif pred < current_short_thresh:
-                # Agent Went SHORT
-                # If short, and burst went negative, negative minus negative = positive PnL!
                 day_pnl -= y_day[i]
                 total_shorts += 1
                 total_trades += 1
                 
-            # Keep predictions cached to roll the percentiles cleanly into tomorrow
             recent_predictions.append(pred)
             
         daily_pnls.append(day_pnl)
+        cum_pnl_tracker += day_pnl
         
         # 5. AT CLOSE: Execute Nightly Model Adaptation (Regime update)
         model.partial_fit(X_day_s, y_day)
-        # Update our feature scalers dynamically using partial_fit online scaling logic natively inside StandardScaler
         scaler.partial_fit(X_day) 
+
+        # Progress timeline every ~1 month (20 trading days)
+        if day_idx % 20 == 0:
+            day_str = str(day).split()[0]
+            print(f"[{day_str}] Walk-Forward Day {day_idx}/{len(remaining_days)} "
+                  f"| CumPnL: {cum_pnl_tracker:7.3f} "
+                  f"| Trades Executed: {total_trades:5d} "
+                  f"| Rolling Thresholds L>{current_long_thresh:.3f} S<{current_short_thresh:.3f}") 
 
     # 6. CALCULATE SHARPE & PNL STATISTICS
     daily_pnls = np.array(daily_pnls)
