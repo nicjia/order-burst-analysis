@@ -93,6 +93,12 @@ def main():
     parser.add_argument("--dir-thresh", type=float, default=0.68)
     parser.add_argument("--vol-ratio", type=float, default=0.36)
     parser.add_argument("--kappa", type=float, default=0.0) 
+    parser.add_argument("--spread-col", default="Spread",
+                        help="Column name for bid-ask spread in price units")
+    parser.add_argument("--spread-multiplier", type=float, default=0.5,
+                        help="Execution cost multiplier on spread (0.5=half spread, 1.0=full spread)")
+    parser.add_argument("--adaptive-scaler", action="store_true",
+                        help="Update StandardScaler online after each day (off by default for scale stability)")
     
     args = parser.parse_args()
 
@@ -137,6 +143,13 @@ def main():
     if len(filtered) == 0:
         print("ERROR: Strict universal filters eliminated 100% of the dataset!")
         sys.exit(1)
+
+    use_spread_cost = args.spread_col in filtered.columns
+    if use_spread_cost:
+        print(f"Execution model: spread-aware using '{args.spread_col}' with multiplier={args.spread_multiplier}")
+    else:
+        print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
+    print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
     
@@ -194,6 +207,7 @@ def main():
     total_trades = 0
     total_longs = 0
     total_shorts = 0
+    total_spread_cost_raw = 0.0
     
     # Keep rolling lookback of predictions (e.g., roughly 1000 burst predictions) to natively track dynamic 75th percentile
     recent_predictions = collections.deque(maxlen=1000) 
@@ -205,6 +219,7 @@ def main():
     
     # ── THE CORE ENGINE ──
     cum_pnl_tracker = 0.0
+    cum_pnl_raw_tracker = 0.0
 
     for day_idx, day in enumerate(remaining_days):
         day_mask = (filtered['DateCol'] == day).values
@@ -213,6 +228,8 @@ def main():
             
         X_day = X[day_mask]
         y_day = y[day_mask] # True Permanence (arcsinh real value structure log-returns)
+        vol_day = filtered.loc[day_mask, 'BurstVolume'].to_numpy(dtype=float)
+        spread_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
         
         # 1. Transform strictly off yesterday's scaler weights (No Peeking at today!)
         X_day_s = scaler.transform(X_day)
@@ -225,25 +242,47 @@ def main():
         current_short_thresh = np.percentile(recent_predictions, 25)
         
         day_pnl = 0.0
+        day_pnl_raw = 0.0
         # 4. Trigger simulated entries blindly strictly if they hit conviction thresholds
         for i, pred in enumerate(preds):
+            side = 0
             if pred > current_long_thresh:
-                day_pnl += y_day[i] 
+                side = 1
                 total_longs += 1
                 total_trades += 1
             elif pred < current_short_thresh:
-                day_pnl -= y_day[i]
+                side = -1
                 total_shorts += 1
                 total_trades += 1
+
+            if side != 0:
+                gross_edge_raw = np.sinh(y_day[i])
+                signed_edge_raw = gross_edge_raw if side > 0 else -gross_edge_raw
+
+                spread_cost_raw = 0.0
+                if use_spread_cost:
+                    spread_val = max(0.0, float(spread_day[i]))
+                    spread_cost_raw = args.spread_multiplier * float(vol_day[i]) * spread_val
+
+                net_edge_raw = signed_edge_raw - spread_cost_raw
+                day_pnl_raw += net_edge_raw
+                total_spread_cost_raw += spread_cost_raw
+                # Keep reported PnL in the same transformed space as the existing backtest output.
+                day_pnl += np.arcsinh(net_edge_raw)
                 
             recent_predictions.append(pred)
             
         daily_pnls.append(day_pnl)
+        cum_pnl_raw_tracker += day_pnl_raw
         cum_pnl_tracker += day_pnl
         
         # 5. AT CLOSE: Execute Nightly Model Adaptation (Regime update)
-        model.partial_fit(X_day_s, y_day)
-        scaler.partial_fit(X_day) 
+        if args.adaptive_scaler:
+            scaler.partial_fit(X_day)
+            X_day_for_fit = scaler.transform(X_day)
+        else:
+            X_day_for_fit = X_day_s
+        model.partial_fit(X_day_for_fit, y_day)
 
         # Progress timeline every ~1 month (20 trading days)
         if day_idx % 20 == 0:
@@ -269,7 +308,9 @@ def main():
     print("="*80)
     print(f"  Total Valid Bursts Scanned:   {len(y) - len(y_train):,}")
     print(f"  Total Trades Fired:           {total_trades:,} ({total_longs:,} Long / {total_shorts:,} Short)")
+    print(f"  Total Spread Cost (raw):      {total_spread_cost_raw:.4f}")
     print(f"\n  Cumulative Simulated PnL:     {cum_pnl:.4f}")
+    print(f"  Cumulative Sim PnL (raw):     {cum_pnl_raw_tracker:.4f}")
     print(f"  Daily Mean PnL:               {mean_daily_pnl:.5f}")
     print(f"  Daily StdDev (Variance):      {std_daily_pnl:.5f}")
     print(f"  Annualized Sharpe Ratio:      {sharpe_ratio:.2f}")

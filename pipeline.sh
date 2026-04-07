@@ -41,7 +41,8 @@ cd "${ROOT}"
 
 # --- Environment ---
 . /u/local/Modules/default/init/bash
-module load gcc/11.3.0 python/3.9.6
+module load gcc/10.2.0
+module load python/3.9.6
 source "${ROOT}/.venv/bin/activate"
 
 stage_time() {

@@ -24,7 +24,8 @@
 
 # ── 2. Load Python environment ──────────────────────────────
 . /u/local/Modules/default/init/bash
-module load gcc/11.3.0 python/3.9.6
+module load gcc/10.2.0
+module load python/3.9.6
 source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
 
 set -Eeo pipefail
