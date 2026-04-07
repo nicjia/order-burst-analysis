@@ -5,7 +5,6 @@ import sys
 import os
 import collections
 from pathlib import Path
-from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -44,7 +43,10 @@ def build_target(df, target_key):
         y = np.clip(vals, lo, hi)
         return y, 'regression', {'lo': lo, 'hi': hi}
     else:
-        raise ValueError("SGD requires a regression target!")
+        raise ValueError(
+            "SGD backtester currently supports regression targets only: "
+            "reg_1m/reg_3m/reg_5m/reg_10m/reg_close/reg_clop/reg_clcl"
+        )
 
 BASE_FEATURE_COLS = [
     'Direction', 'BurstVolume', 'TradeCount', 'Duration',
@@ -114,6 +116,13 @@ def infer_horizon_minutes(target_key):
         "cls_10m": 10,
     }
     return horizon_map.get(target_key, 10)
+
+
+def is_close_style_target(target_key):
+    return target_key in {
+        "reg_close", "reg_clop", "reg_clcl",
+        "cls_close", "cls_clop", "cls_clcl",
+    }
 
 warnings.filterwarnings("ignore")
 
@@ -227,6 +236,14 @@ def main():
     print(f"Execution mode: {args.execution_mode}")
     print(f"Signal mode: {args.signal_mode}")
     print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
+
+    close_style_target = is_close_style_target(args.target)
+    if args.execution_mode == "burst_stream":
+        if close_style_target:
+            print("Hold horizon: close-style target (positions exit at end of same trading day)")
+        else:
+            horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
+            print(f"Hold horizon: {horizon_minutes:.2f} minutes")
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
     
@@ -311,6 +328,11 @@ def main():
     # ── THE CORE ENGINE ──
     cum_pnl_tracker = 0.0
     cum_pnl_raw_tracker = 0.0
+    open_trades = collections.deque()
+    hold_delta = None
+    if args.execution_mode == "burst_stream" and not close_style_target:
+        horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
+        hold_delta = np.timedelta64(int(round(horizon_minutes * 60)), "s")
 
     for day_idx, day in enumerate(remaining_days):
         day_mask = (filtered['DateCol'] == day).values
@@ -323,6 +345,7 @@ def main():
         vol_day = day_df['BurstVolume'].to_numpy(dtype=float)
         day_idx_arr = np.flatnonzero(day_mask)
         event_ts_day = event_ts_np[day_idx_arr]
+        day_end_ts = event_ts_day[-1]
         mid_day = day_df[args.mid_col].to_numpy(dtype=float) if args.execution_mode == "burst_stream" else None
         spread_entry_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
         spread_exit_day = (
@@ -343,10 +366,6 @@ def main():
         
         day_pnl = 0.0
         day_pnl_raw = 0.0
-        if day_idx == 0:
-            open_trades = collections.deque()
-            horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
-            hold_delta = np.timedelta64(int(round(horizon_minutes * 60)), "s")
 
         # 4. Trigger simulated entries blindly strictly if they hit conviction thresholds
         for i, pred in enumerate(preds):
@@ -436,8 +455,14 @@ def main():
                     entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
                     total_entry_spread_cost_raw += entry_cost_raw
                     total_spread_cost_raw += entry_cost_raw
+
+                    due_ts = day_end_ts if close_style_target else (current_ts + hold_delta)
+                    # If there is no later event to close against, skip this entry.
+                    if due_ts <= current_ts:
+                        continue
+
                     open_trades.append({
-                        "due_ts": current_ts + hold_delta,
+                        "due_ts": due_ts,
                         "entry_mid": entry_mid,
                         "qty": qty,
                         "side": side,
