@@ -20,7 +20,7 @@ set -e
 # conda activate your_env_name
 
 # Option B: If you use a standard Python module
-# module load python/3.9
+module load python/3.9
 
 # Option C: If you use a standard python virtual environment (venv)
 # source /path/to/your/venv/bin/activate
