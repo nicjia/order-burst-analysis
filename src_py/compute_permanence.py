@@ -94,17 +94,13 @@ def main():
                     for i in range(len(trading_days) - 1)}
 
     # ── tCLOSE: uses CloseMid from burst CSV (intraday) ─────
-    bursts['Perm_tCLOSE'] = bursts.apply(
-        lambda r: permanence(r['Direction'], r['CloseMid'], r['StartPrice'], r['BurstVolume']),
-        axis=1)
+    bursts['Perm_tCLOSE'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CloseMid'] - bursts['StartPrice']).astype('float64'))
 
     # ── Intraday forward returns (1m, 3m, 5m, 10m) ──────────
     for label, col in [('1m', 'Mid_1m'), ('3m', 'Mid_3m'),
                        ('5m', 'Mid_5m'), ('10m', 'Mid_10m')]:
         if col in bursts.columns:
-            bursts[f'Perm_t{label}'] = bursts.apply(
-                lambda r, c=col: permanence(r['Direction'], r[c], r['StartPrice'], r['BurstVolume']),
-                axis=1)
+            bursts[f'Perm_t{label}'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts[col] - bursts['StartPrice']).astype('float64'))
 
     # ── D_b: Short-Horizon Decay Filter (Eq 3.2) ────────────
     #  D_b = (1/4) Σ_τ Q_b × Direction × (Mid_τ − StartPrice)
@@ -123,41 +119,23 @@ def main():
         bursts['D_b'] = np.nan
         print("WARNING: No Mid_1m/3m/5m/10m columns found – cannot compute D_b")
 
-    # ── CLOP & CLCL: look up CRSP prices ────────────────────
-    def lookup_crsp(row, price_df, use_next_day):
-        """Look up a CRSP price for this burst's ticker on today or next trading day."""
-        ticker = row['Ticker']
-        today  = row['date_int']
+    # ── CLOP & CLCL: Vectorized CRSP Matrix Lookup ────────────────────
+    # extremely fast pd.merge instead of row-by-row lookups
+    bursts['target_day'] = bursts['date_int'].map(next_day_map)
+    open_melted = open_px.reset_index().melt(id_vars='date', var_name='Ticker', value_name='CRSP_OP')
+    close_melted = close_px.reset_index().melt(id_vars='date', var_name='Ticker', value_name='CRSP_CL')
 
-        if ticker not in price_df.columns:
-            return np.nan
+    bursts = pd.merge(bursts, open_melted, left_on=['target_day', 'Ticker'], right_on=['date', 'Ticker'], how='left')
+    bursts = pd.merge(bursts, close_melted, left_on=['target_day', 'Ticker'], right_on=['date', 'Ticker'], how='left')
 
-        if use_next_day:
-            target_day = next_day_map.get(today)
-            if target_day is None:
-                return np.nan   # last trading day in dataset
-        else:
-            target_day = today
+    # CLOP: x = open price of next trading day
+    bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - bursts['StartPrice']).astype('float64'))
 
-        if target_day not in price_df.index:
-            return np.nan
-
-        return price_df.loc[target_day, ticker]
-
-    # CLOP: x = open price of next trading day  (o_{i,t+1})
-    bursts['x_CLOP'] = bursts.apply(lambda r: lookup_crsp(r, open_px, use_next_day=True), axis=1)
-    bursts['Perm_CLOP'] = bursts.apply(
-        lambda r: permanence(r['Direction'], r['x_CLOP'], r['StartPrice'], r['BurstVolume']),
-        axis=1)
-
-    # CLCL: x = close price of next trading day  (c_{i,t+1})
-    bursts['x_CLCL'] = bursts.apply(lambda r: lookup_crsp(r, close_px, use_next_day=True), axis=1)
-    bursts['Perm_CLCL'] = bursts.apply(
-        lambda r: permanence(r['Direction'], r['x_CLCL'], r['StartPrice'], r['BurstVolume']),
-        axis=1)
+    # CLCL: x = close price of next trading day
+    bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - bursts['StartPrice']).astype('float64'))
 
     # ── Clean up helper columns ───────────────────────────────
-    drop_cols = ['date_int', 'x_CLOP', 'x_CLCL'] + [c for c in bursts.columns if c.startswith('Disp_')]
+    drop_cols = ['date_int', 'target_day', 'date_x', 'date_y', 'CRSP_OP', 'CRSP_CL'] + [c for c in bursts.columns if c.startswith('Disp_')]
     bursts.drop(columns=[c for c in drop_cols if c in bursts.columns], inplace=True)
 
     # ── Duration column (seconds) ────────────────────────────
