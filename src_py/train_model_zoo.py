@@ -405,8 +405,10 @@ TARGET_MAP = {
     'reg_close':  ('Perm_tCLOSE', 'regression', None),
     'reg_clop':   ('Perm_CLOP',   'regression', None),
     'reg_clcl':   ('Perm_CLCL',   'regression', None),
-    'reg_1m':     ('Perm_t1m',     'regression', None),
-    'reg_5m':     ('Perm_t5m',     'regression', None),
+    'reg_1m':     ('Perm_t1m',    'regression', None),
+    'reg_3m':     ('Perm_t3m',    'regression', None),
+    'reg_5m':     ('Perm_t5m',    'regression', None),
+    'reg_10m':    ('Perm_t10m',   'regression', None),
 }
 
 

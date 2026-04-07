@@ -46,6 +46,8 @@ def main():
         help='Pivot matrix of raw close prices (rows=date, cols=ticker)')
     ap.add_argument('--kappa', type=float, default=0.10,
         help='Decay-filter threshold κ  (default 0.10). Set to 0 to disable.')
+    ap.add_argument('--ticker', type=str, default=None,
+        help='Force the Ticker column to this value (e.g. NVDA) to fix C++ folder extraction bugs like Ticker="archive"')
     args = ap.parse_args()
 
     bursts_file = args.bursts_csv
@@ -61,6 +63,10 @@ def main():
     close_px = pd.read_csv(close_file, index_col='date')
     print(f"Open prices:  {open_px.shape[0]} dates × {open_px.shape[1]} tickers")
     print(f"Close prices: {close_px.shape[0]} dates × {close_px.shape[1]} tickers")
+
+    if args.ticker is not None:
+        bursts['Ticker'] = args.ticker
+        print(f"Force-Set Ticker column to '{args.ticker}'")
 
     # ── Compute BurstVolume (needed for volume-weighted permanence) ──
     if 'BurstVolume' not in bursts.columns:
