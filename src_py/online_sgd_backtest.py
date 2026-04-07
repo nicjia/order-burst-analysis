@@ -166,11 +166,13 @@ def main():
     X_train, y_train = X[train_mask], y[train_mask]
     
     model = SGDRegressor(
-        loss='squared_error',
+        loss='huber',           # FIX 1: Robust to massive market outliers
+        epsilon=1.35,           # Standard boundary for where Huber kicks in
         penalty='l2',
-        alpha=0.0001,
+        alpha=0.001,            # Slightly stronger regularization
         learning_rate='adaptive', 
-        eta0=0.01,
+        eta0=0.001,             # FIX 2: Lower initial step size (0.01 was too aggressive)
+        max_iter=1000,
         random_state=42
     )
     
