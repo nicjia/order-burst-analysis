@@ -11,19 +11,14 @@
 set -e
 
 # ==========================================================
-# FIX: Load your Python environment so it knows where Pandas is.
-# (Uncomment ONE of the options below that matches your setup)
+# THE FIX: Initialize the cluster's module system first
 # ==========================================================
+source /etc/profile.d/modules.sh 2>/dev/null || . /u/local/Modules/default/init/modules.sh
 
-# Option A: If you use Anaconda on the cluster
-# module load anaconda3
-# conda activate your_env_name
-
-# Option B: If you use a standard Python module
+# NOW the node knows what 'module' means. 
+# (Uncomment the one you actually use)
+# module load anaconda
 module load python/3.9
-
-# Option C: If you use a standard python virtual environment (venv)
-# source /path/to/your/venv/bin/activate
 
 echo "=========================================================="
 echo "  VECTORIZED COMPUTE PERMANENCE & SGD BACKTEST PIPELINE"
