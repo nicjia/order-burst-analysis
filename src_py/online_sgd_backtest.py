@@ -80,6 +80,26 @@ def get_features(df, target_key):
     X.fillna(0, inplace=True)
     return X, feat_available
 
+
+def infer_exit_spread_col(target_key):
+    horizon_map = {
+        "reg_1m": "Spread_1m",
+        "reg_3m": "Spread_3m",
+        "reg_5m": "Spread_5m",
+        "reg_10m": "Spread_10m",
+        "cls_1m": "Spread_1m",
+        "cls_3m": "Spread_3m",
+        "cls_5m": "Spread_5m",
+        "cls_10m": "Spread_10m",
+        "reg_close": "Spread_close",
+        "cls_close": "Spread_close",
+        "reg_clop": "Spread_clop",
+        "cls_clop": "Spread_clop",
+        "reg_clcl": "Spread_clcl",
+        "cls_clcl": "Spread_clcl",
+    }
+    return horizon_map.get(target_key)
+
 warnings.filterwarnings("ignore")
 
 def main():
@@ -96,7 +116,11 @@ def main():
     parser.add_argument("--spread-col", default="Spread",
                         help="Column name for bid-ask spread in price units")
     parser.add_argument("--spread-multiplier", type=float, default=0.5,
-                        help="Execution cost multiplier on spread (0.5=half spread, 1.0=full spread)")
+                        help="Entry-side spread multiplier (0.5=half spread at entry)")
+    parser.add_argument("--spread-exit-col", default="",
+                        help="Optional horizon spread column; if missing/empty, fallback uses entry spread column")
+    parser.add_argument("--spread-exit-multiplier", type=float, default=0.5,
+                        help="Exit-side spread multiplier (0.5=half spread at exit)")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
     parser.add_argument("--pnl-space", choices=["raw", "transformed"], default="raw",
@@ -149,8 +173,21 @@ def main():
         sys.exit(1)
 
     use_spread_cost = args.spread_col in filtered.columns
+    inferred_exit_col = infer_exit_spread_col(args.target)
+    exit_spread_col = args.spread_exit_col.strip() if args.spread_exit_col.strip() else inferred_exit_col
+    use_exit_spread_col = bool(exit_spread_col) and (exit_spread_col in filtered.columns)
+
     if use_spread_cost:
-        print(f"Execution model: spread-aware using '{args.spread_col}' with multiplier={args.spread_multiplier}")
+        if use_exit_spread_col:
+            print(
+                f"Execution model: round-trip spread-aware using entry='{args.spread_col}' and exit='{exit_spread_col}' "
+                f"(mult={args.spread_multiplier}+{args.spread_exit_multiplier})"
+            )
+        else:
+            print(
+                f"Execution model: round-trip spread-aware using entry='{args.spread_col}' and exit~entry fallback "
+                f"(mult={args.spread_multiplier}+{args.spread_exit_multiplier})"
+            )
     else:
         print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
     print(f"Position size multiplier: {args.position_size_mult}")
@@ -214,6 +251,8 @@ def main():
     total_longs = 0
     total_shorts = 0
     total_spread_cost_raw = 0.0
+    total_entry_spread_cost_raw = 0.0
+    total_exit_spread_cost_raw = 0.0
     
     # Keep rolling lookback of predictions (e.g., roughly 1000 burst predictions) to natively track dynamic 75th percentile
     recent_predictions = collections.deque(maxlen=1000) 
@@ -235,7 +274,12 @@ def main():
         X_day = X[day_mask]
         y_day = y[day_mask] # True Permanence (arcsinh real value structure log-returns)
         vol_day = filtered.loc[day_mask, 'BurstVolume'].to_numpy(dtype=float)
-        spread_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
+        spread_entry_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
+        spread_exit_day = (
+            filtered.loc[day_mask, exit_spread_col].to_numpy(dtype=float)
+            if use_spread_cost and use_exit_spread_col
+            else spread_entry_day
+        )
         
         # 1. Transform strictly off yesterday's scaler weights (No Peeking at today!)
         X_day_s = scaler.transform(X_day)
@@ -268,8 +312,17 @@ def main():
 
                 spread_cost_raw = 0.0
                 if use_spread_cost:
-                    spread_val = max(0.0, float(spread_day[i]))
-                    spread_cost_raw = args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_val
+                    spread_entry_val = max(0.0, float(spread_entry_day[i]))
+                    spread_exit_val = max(0.0, float(spread_exit_day[i]))
+                    entry_cost_raw = (
+                        args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_entry_val
+                    )
+                    exit_cost_raw = (
+                        args.spread_exit_multiplier * args.position_size_mult * float(vol_day[i]) * spread_exit_val
+                    )
+                    spread_cost_raw = entry_cost_raw + exit_cost_raw
+                    total_entry_spread_cost_raw += entry_cost_raw
+                    total_exit_spread_cost_raw += exit_cost_raw
 
                 net_edge_raw = signed_edge_raw - spread_cost_raw
                 day_pnl_raw += net_edge_raw
@@ -317,6 +370,8 @@ def main():
     print("="*80)
     print(f"  Total Valid Bursts Scanned:   {len(y) - len(y_train):,}")
     print(f"  Total Trades Fired:           {total_trades:,} ({total_longs:,} Long / {total_shorts:,} Short)")
+    print(f"  Entry Spread Cost (raw):      {total_entry_spread_cost_raw:.4f}")
+    print(f"  Exit Spread Cost (raw):       {total_exit_spread_cost_raw:.4f}")
     print(f"  Total Spread Cost (raw):      {total_spread_cost_raw:.4f}")
     print(f"\n  Cumulative Simulated PnL ({args.pnl_space}): {cum_pnl:.4f}")
     print(f"  Cumulative Sim PnL (raw):     {cum_pnl_raw_tracker:.4f}")
