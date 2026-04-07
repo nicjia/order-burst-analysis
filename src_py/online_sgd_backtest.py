@@ -14,7 +14,36 @@ from sklearn.preprocessing import StandardScaler
 # Ensure we can import local modules
 sys.path.append(str(Path(__file__).parent.absolute()))
 from silence_optimized_sweep import compute_trailing_adv, classify_and_filter
-from train_model_zoo import build_target, TARGET_MAP
+
+TARGET_MAP = {
+    'cls_1m':     ('Perm_t1m',     'binary',  0.0),
+    'cls_3m':     ('Perm_t3m',     'binary',  0.0),
+    'cls_5m':     ('Perm_t5m',     'binary',  0.0),
+    'cls_10m':    ('Perm_t10m',    'binary',  0.0),
+    'cls_close':  ('Perm_tCLOSE', 'binary',  0.0),
+    'cls_clop':   ('Perm_CLOP',   'binary',  0.0),
+    'cls_clcl':   ('Perm_CLCL',   'binary',  0.0),
+    'reg_close':  ('Perm_tCLOSE', 'regression', None),
+    'reg_clop':   ('Perm_CLOP',   'regression', None),
+    'reg_clcl':   ('Perm_CLCL',   'regression', None),
+    'reg_1m':     ('Perm_t1m',    'regression', None),
+    'reg_3m':     ('Perm_t3m',    'regression', None),
+    'reg_5m':     ('Perm_t5m',    'regression', None),
+    'reg_10m':    ('Perm_t10m',   'regression', None),
+}
+
+def build_target(df, target_key):
+    col, task, threshold = TARGET_MAP[target_key]
+    if col not in df.columns:
+        raise ValueError(f"Target column '{col}' not in data.")
+    vals = df[col].values.copy()
+    if task == 'regression':
+        lo = np.nanpercentile(vals, 1)
+        hi = np.nanpercentile(vals, 99)
+        y = np.clip(vals, lo, hi)
+        return y, 'regression', {'lo': lo, 'hi': hi}
+    else:
+        raise ValueError("SGD requires a regression target!")
 
 BASE_FEATURE_COLS = [
     'Direction', 'BurstVolume', 'TradeCount', 'Duration',
