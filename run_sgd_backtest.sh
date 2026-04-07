@@ -2,8 +2,6 @@
 #$ -cwd
 #$ -N SGD_backtest
 #$ -l h_data=8G,h_rt=2:00:00
-#$ -M nicjia@ucla.edu
-#$ -m bea
 #$ -o logs/backtest_$JOB_ID.out
 #$ -e logs/backtest_$JOB_ID.err
 
@@ -11,6 +9,21 @@
 
 # Stop on errors
 set -e
+
+# ==========================================================
+# FIX: Load your Python environment so it knows where Pandas is.
+# (Uncomment ONE of the options below that matches your setup)
+# ==========================================================
+
+# Option A: If you use Anaconda on the cluster
+# module load anaconda3
+# conda activate your_env_name
+
+# Option B: If you use a standard Python module
+# module load python/3.9
+
+# Option C: If you use a standard python virtual environment (venv)
+# source /path/to/your/venv/bin/activate
 
 echo "=========================================================="
 echo "  VECTORIZED COMPUTE PERMANENCE & SGD BACKTEST PIPELINE"
