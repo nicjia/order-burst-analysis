@@ -1,7 +1,7 @@
 #!/bin/bash
 #$ -cwd
 #$ -N SGD_backtest
-#$ -l h_data=8G,h_rt=2:00:00,highp
+#$ -l h_data=8G,h_rt=2:00:00
 #$ -M nicjia@ucla.edu
 #$ -m bea
 #$ -o logs/backtest_$JOB_ID.out
