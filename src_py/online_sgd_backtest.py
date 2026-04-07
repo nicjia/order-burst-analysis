@@ -14,7 +14,42 @@ from sklearn.preprocessing import StandardScaler
 # Ensure we can import local modules
 sys.path.append(str(Path(__file__).parent.absolute()))
 from silence_optimized_sweep import compute_trailing_adv, classify_and_filter
-from train_model_zoo import build_target, TARGET_MAP, get_features
+from train_model_zoo import build_target, TARGET_MAP
+
+BASE_FEATURE_COLS = [
+    'Direction', 'BurstVolume', 'TradeCount', 'Duration',
+    'PeakImpact', 'D_b', 'AvgTradeSize', 'PriceChange',
+]
+EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
+    'TimeOfDay', 'LogVolume', 'LogPeakImpact', 'ImpactPerShare',
+    'RecentBurstCount', 'RecentBurstVol',
+    'Dir_x_Volume', 'Dir_x_Impact', 'Dir_x_Db',
+    'Volume_x_Impact', 'Volume_x_Duration',
+    'Impact_x_Db', 'Impact_x_TradeCount',
+    'AvgSize_x_Impact', 'AvgSize_x_Db',
+    'ImpactPerTrade', 'VolumePerSec',
+    'DbSquared', 'ImpactSquared',
+    'Volume_qrank', 'Impact_qrank', 'Db_qrank',
+    'RecentBurstCountOpp', 'RecentBurstVolOpp',
+    'NetRecentFlow', 'BurstDensity5m',
+    'TimeOfDaySin', 'TimeOfDayCos', 'IsOpen15', 'IsClose15', 'HourOfDay',
+    'PriceLevel', 'VolPerDollar',
+]
+DB_TAINTED_FEATURES = {
+    'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
+}
+DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m',
+                    'reg_1m', 'reg_3m', 'reg_5m', 'reg_10m'}
+
+def get_features(df, target_key):
+    feat_cols = list(EXTENDED_FEATURE_COLS)
+    if target_key in DB_LEAKY_TARGETS:
+        feat_cols = [c for c in feat_cols if c not in DB_TAINTED_FEATURES]
+    feat_available = [c for c in feat_cols if c in df.columns]
+    
+    X = df[feat_available].copy()
+    X.fillna(0, inplace=True)
+    return X, feat_available
 
 warnings.filterwarnings("ignore")
 
