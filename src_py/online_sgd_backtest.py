@@ -5,6 +5,7 @@ import sys
 import os
 import collections
 from pathlib import Path
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -100,6 +101,20 @@ def infer_exit_spread_col(target_key):
     }
     return horizon_map.get(target_key)
 
+
+def infer_horizon_minutes(target_key):
+    horizon_map = {
+        "reg_1m": 1,
+        "reg_3m": 3,
+        "reg_5m": 5,
+        "reg_10m": 10,
+        "cls_1m": 1,
+        "cls_3m": 3,
+        "cls_5m": 5,
+        "cls_10m": 10,
+    }
+    return horizon_map.get(target_key, 10)
+
 warnings.filterwarnings("ignore")
 
 def main():
@@ -121,6 +136,12 @@ def main():
                         help="Optional horizon spread column; if missing/empty, fallback uses entry spread column")
     parser.add_argument("--spread-exit-multiplier", type=float, default=0.5,
                         help="Exit-side spread multiplier (0.5=half spread at exit)")
+    parser.add_argument("--execution-mode", choices=["label_proxy", "burst_stream"], default="burst_stream",
+                        help="label_proxy uses permanence labels for realized edge; burst_stream uses event-time round-trip fills")
+    parser.add_argument("--mid-col", default="EndPrice",
+                        help="Proxy mid-price column for burst_stream fills (default EndPrice)")
+    parser.add_argument("--horizon-minutes", type=float, default=None,
+                        help="Hold horizon for burst_stream mode. If omitted, inferred from target (e.g., reg_10m -> 10)")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
     parser.add_argument("--pnl-space", choices=["raw", "transformed"], default="raw",
@@ -192,6 +213,7 @@ def main():
         print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
     print(f"Position size multiplier: {args.position_size_mult}")
     print(f"Reported PnL space: {args.pnl_space}")
+    print(f"Execution mode: {args.execution_mode}")
     print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
@@ -209,6 +231,18 @@ def main():
         
     y = y if isinstance(y, np.ndarray) else y.values
     X = X.values
+
+    # Build per-burst event timestamps for stream execution.
+    time_col = "EndTime" if "EndTime" in filtered.columns else "StartTime"
+    if time_col in filtered.columns:
+        event_ts = filtered["DateCol"] + pd.to_timedelta(filtered[time_col], unit="s")
+    else:
+        event_ts = filtered["DateCol"]
+    event_ts_np = event_ts.to_numpy()
+
+    if args.execution_mode == "burst_stream" and args.mid_col not in filtered.columns:
+        print(f"ERROR: --mid-col '{args.mid_col}' not found for burst_stream mode")
+        sys.exit(1)
 
     # 4. BURN-IN PHASE (1 MONTH)
     dates = sorted(filtered['DateCol'].unique())
@@ -273,7 +307,11 @@ def main():
             
         X_day = X[day_mask]
         y_day = y[day_mask] # True Permanence (arcsinh real value structure log-returns)
-        vol_day = filtered.loc[day_mask, 'BurstVolume'].to_numpy(dtype=float)
+        day_df = filtered.loc[day_mask]
+        vol_day = day_df['BurstVolume'].to_numpy(dtype=float)
+        day_idx_arr = np.flatnonzero(day_mask)
+        event_ts_day = event_ts_np[day_idx_arr]
+        mid_day = day_df[args.mid_col].to_numpy(dtype=float) if args.execution_mode == "burst_stream" else None
         spread_entry_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
         spread_exit_day = (
             filtered.loc[day_mask, exit_spread_col].to_numpy(dtype=float)
@@ -293,8 +331,32 @@ def main():
         
         day_pnl = 0.0
         day_pnl_raw = 0.0
+        if day_idx == 0:
+            open_trades = collections.deque()
+            horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
+            hold_delta = np.timedelta64(int(round(horizon_minutes * 60)), "s")
+
         # 4. Trigger simulated entries blindly strictly if they hit conviction thresholds
         for i, pred in enumerate(preds):
+            current_ts = event_ts_day[i]
+
+            # Close all due trades at current burst proxy prices (round-trip simulation mode).
+            if args.execution_mode == "burst_stream":
+                while open_trades and current_ts >= open_trades[0]["due_ts"]:
+                    tr = open_trades.popleft()
+                    exit_mid = float(mid_day[i])
+                    exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
+                    exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
+                    gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
+                    net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
+                    day_pnl_raw += net_edge_raw
+                    total_exit_spread_cost_raw += exit_cost_raw
+                    total_spread_cost_raw += exit_cost_raw
+                    if args.pnl_space == "raw":
+                        day_pnl += net_edge_raw
+                    else:
+                        day_pnl += np.arcsinh(net_edge_raw)
+
             side = 0
             if pred > current_long_thresh:
                 side = 1
@@ -306,31 +368,47 @@ def main():
                 total_trades += 1
 
             if side != 0:
-                gross_edge_raw = np.sinh(y_day[i])
-                signed_edge_raw = gross_edge_raw if side > 0 else -gross_edge_raw
-                signed_edge_raw *= args.position_size_mult
+                if args.execution_mode == "label_proxy":
+                    gross_edge_raw = np.sinh(y_day[i])
+                    signed_edge_raw = gross_edge_raw if side > 0 else -gross_edge_raw
+                    signed_edge_raw *= args.position_size_mult
 
-                spread_cost_raw = 0.0
-                if use_spread_cost:
-                    spread_entry_val = max(0.0, float(spread_entry_day[i]))
-                    spread_exit_val = max(0.0, float(spread_exit_day[i]))
-                    entry_cost_raw = (
-                        args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_entry_val
-                    )
-                    exit_cost_raw = (
-                        args.spread_exit_multiplier * args.position_size_mult * float(vol_day[i]) * spread_exit_val
-                    )
-                    spread_cost_raw = entry_cost_raw + exit_cost_raw
-                    total_entry_spread_cost_raw += entry_cost_raw
-                    total_exit_spread_cost_raw += exit_cost_raw
+                    spread_cost_raw = 0.0
+                    if use_spread_cost:
+                        spread_entry_val = max(0.0, float(spread_entry_day[i]))
+                        spread_exit_val = max(0.0, float(spread_exit_day[i]))
+                        entry_cost_raw = (
+                            args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_entry_val
+                        )
+                        exit_cost_raw = (
+                            args.spread_exit_multiplier * args.position_size_mult * float(vol_day[i]) * spread_exit_val
+                        )
+                        spread_cost_raw = entry_cost_raw + exit_cost_raw
+                        total_entry_spread_cost_raw += entry_cost_raw
+                        total_exit_spread_cost_raw += exit_cost_raw
 
-                net_edge_raw = signed_edge_raw - spread_cost_raw
-                day_pnl_raw += net_edge_raw
-                total_spread_cost_raw += spread_cost_raw
-                if args.pnl_space == "raw":
-                    day_pnl += net_edge_raw
+                    net_edge_raw = signed_edge_raw - spread_cost_raw
+                    day_pnl_raw += net_edge_raw
+                    total_spread_cost_raw += spread_cost_raw
+                    if args.pnl_space == "raw":
+                        day_pnl += net_edge_raw
+                    else:
+                        day_pnl += np.arcsinh(net_edge_raw)
                 else:
-                    day_pnl += np.arcsinh(net_edge_raw)
+                    # Open a round-trip trade now; realize PnL when a later burst reaches horizon.
+                    entry_mid = float(mid_day[i])
+                    qty = args.position_size_mult * float(vol_day[i])
+                    spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
+                    entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
+                    total_entry_spread_cost_raw += entry_cost_raw
+                    total_spread_cost_raw += entry_cost_raw
+                    open_trades.append({
+                        "due_ts": current_ts + hold_delta,
+                        "entry_mid": entry_mid,
+                        "qty": qty,
+                        "side": side,
+                        "entry_cost_raw": entry_cost_raw,
+                    })
                 
             recent_predictions.append(pred)
             
@@ -368,6 +446,10 @@ def main():
     print("\n" + "="*80)
     print("  SIMULATION COMPLETE (OUT-OF-SAMPLE REGIME RESULTS)")
     print("="*80)
+
+    if args.execution_mode == "burst_stream" and open_trades:
+        print(f"  Open trades not yet due at end of data: {len(open_trades):,} (excluded from realized PnL)")
+
     print(f"  Total Valid Bursts Scanned:   {len(y) - len(y_train):,}")
     print(f"  Total Trades Fired:           {total_trades:,} ({total_longs:,} Long / {total_shorts:,} Short)")
     print(f"  Entry Spread Cost (raw):      {total_entry_spread_cost_raw:.4f}")
