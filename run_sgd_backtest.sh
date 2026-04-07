@@ -18,7 +18,7 @@ source /etc/profile.d/modules.sh 2>/dev/null || . /u/local/Modules/default/init/
 # NOW the node knows what 'module' means. 
 # (Uncomment the one you actually use)
 # module load anaconda
-module load python/3.9
+module load python/3.9.6
 
 echo "=========================================================="
 echo "  VECTORIZED COMPUTE PERMANENCE & SGD BACKTEST PIPELINE"
