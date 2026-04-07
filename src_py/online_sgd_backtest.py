@@ -153,6 +153,14 @@ def main():
                         help="Safety multiplier for spread cost in cost_aware mode (1.0 means edge must exceed estimated costs)")
     parser.add_argument("--mid-col", default="EndPrice",
                         help="Proxy mid-price column for burst_stream fills (default EndPrice)")
+    parser.add_argument("--entry-bid-col", default="EndBid",
+                        help="Bid column used for quote-based burst_stream entry")
+    parser.add_argument("--entry-ask-col", default="EndAsk",
+                        help="Ask column used for quote-based burst_stream entry")
+    parser.add_argument("--exit-bid-col", default="EndBid",
+                        help="Bid column used for quote-based burst_stream exit")
+    parser.add_argument("--exit-ask-col", default="EndAsk",
+                        help="Ask column used for quote-based burst_stream exit")
     parser.add_argument("--horizon-minutes", type=float, default=None,
                         help="Hold horizon for burst_stream mode. If omitted, inferred from target (e.g., reg_10m -> 10)")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
@@ -273,6 +281,23 @@ def main():
         print(f"ERROR: --mid-col '{args.mid_col}' not found for burst_stream mode")
         sys.exit(1)
 
+    stream_quote_mode = (
+        args.execution_mode == "burst_stream"
+        and args.entry_bid_col in filtered.columns
+        and args.entry_ask_col in filtered.columns
+        and args.exit_bid_col in filtered.columns
+        and args.exit_ask_col in filtered.columns
+    )
+    if args.execution_mode == "burst_stream":
+        if stream_quote_mode:
+            print(
+                f"Burst-stream fill mode: quote-based "
+                f"(entry bid/ask={args.entry_bid_col}/{args.entry_ask_col}, "
+                f"exit bid/ask={args.exit_bid_col}/{args.exit_ask_col})"
+            )
+        else:
+            print("Burst-stream fill mode: mid+spread proxy (quote columns not fully available)")
+
     # 4. BURN-IN PHASE (1 MONTH)
     dates = sorted(filtered['DateCol'].unique())
     if len(dates) < 30:
@@ -347,6 +372,10 @@ def main():
         event_ts_day = event_ts_np[day_idx_arr]
         day_end_ts = event_ts_day[-1]
         mid_day = day_df[args.mid_col].to_numpy(dtype=float) if args.execution_mode == "burst_stream" else None
+        entry_bid_day = day_df[args.entry_bid_col].to_numpy(dtype=float) if stream_quote_mode else None
+        entry_ask_day = day_df[args.entry_ask_col].to_numpy(dtype=float) if stream_quote_mode else None
+        exit_bid_day = day_df[args.exit_bid_col].to_numpy(dtype=float) if stream_quote_mode else None
+        exit_ask_day = day_df[args.exit_ask_col].to_numpy(dtype=float) if stream_quote_mode else None
         spread_entry_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
         spread_exit_day = (
             filtered.loc[day_mask, exit_spread_col].to_numpy(dtype=float)
@@ -375,11 +404,16 @@ def main():
             if args.execution_mode == "burst_stream":
                 while open_trades and current_ts >= open_trades[0]["due_ts"]:
                     tr = open_trades.popleft()
-                    exit_mid = float(mid_day[i])
-                    exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
-                    exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
-                    gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
-                    net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
+                    if stream_quote_mode:
+                        exit_px = float(exit_bid_day[i]) if tr["side"] > 0 else float(exit_ask_day[i])
+                        net_edge_raw = tr["side"] * tr["qty"] * (exit_px - tr["entry_px"])
+                        exit_cost_raw = 0.0
+                    else:
+                        exit_mid = float(mid_day[i])
+                        exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
+                        exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
+                        gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
+                        net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
                     day_pnl_raw += net_edge_raw
                     total_exit_spread_cost_raw += exit_cost_raw
                     total_spread_cost_raw += exit_cost_raw
@@ -450,11 +484,15 @@ def main():
                         day_pnl += np.arcsinh(net_edge_raw)
                 else:
                     # Open a round-trip trade now; realize PnL when a later burst reaches horizon.
-                    entry_mid = float(mid_day[i])
-                    spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
-                    entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
-                    total_entry_spread_cost_raw += entry_cost_raw
-                    total_spread_cost_raw += entry_cost_raw
+                    if stream_quote_mode:
+                        entry_px = float(entry_ask_day[i]) if side > 0 else float(entry_bid_day[i])
+                        entry_cost_raw = 0.0
+                    else:
+                        entry_mid = float(mid_day[i])
+                        spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
+                        entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
+                        total_entry_spread_cost_raw += entry_cost_raw
+                        total_spread_cost_raw += entry_cost_raw
 
                     due_ts = day_end_ts if close_style_target else (current_ts + hold_delta)
                     # If there is no later event to close against, skip this entry.
@@ -463,7 +501,8 @@ def main():
 
                     open_trades.append({
                         "due_ts": due_ts,
-                        "entry_mid": entry_mid,
+                        "entry_mid": entry_mid if not stream_quote_mode else 0.0,
+                        "entry_px": entry_px if stream_quote_mode else 0.0,
                         "qty": qty,
                         "side": side,
                         "entry_cost_raw": entry_cost_raw,
