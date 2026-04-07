@@ -97,6 +97,10 @@ def main():
                         help="Column name for bid-ask spread in price units")
     parser.add_argument("--spread-multiplier", type=float, default=0.5,
                         help="Execution cost multiplier on spread (0.5=half spread, 1.0=full spread)")
+    parser.add_argument("--position-size-mult", type=float, default=1.0,
+                        help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
+    parser.add_argument("--pnl-space", choices=["raw", "transformed"], default="raw",
+                        help="Space used for reported PnL/Sharpe. raw is dollar-like; transformed uses arcsinh compression")
     parser.add_argument("--adaptive-scaler", action="store_true",
                         help="Update StandardScaler online after each day (off by default for scale stability)")
     
@@ -149,6 +153,8 @@ def main():
         print(f"Execution model: spread-aware using '{args.spread_col}' with multiplier={args.spread_multiplier}")
     else:
         print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
+    print(f"Position size multiplier: {args.position_size_mult}")
+    print(f"Reported PnL space: {args.pnl_space}")
     print(f"Scaler mode: {'adaptive' if args.adaptive_scaler else 'fixed-after-burn-in'}")
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
@@ -258,17 +264,20 @@ def main():
             if side != 0:
                 gross_edge_raw = np.sinh(y_day[i])
                 signed_edge_raw = gross_edge_raw if side > 0 else -gross_edge_raw
+                signed_edge_raw *= args.position_size_mult
 
                 spread_cost_raw = 0.0
                 if use_spread_cost:
                     spread_val = max(0.0, float(spread_day[i]))
-                    spread_cost_raw = args.spread_multiplier * float(vol_day[i]) * spread_val
+                    spread_cost_raw = args.spread_multiplier * args.position_size_mult * float(vol_day[i]) * spread_val
 
                 net_edge_raw = signed_edge_raw - spread_cost_raw
                 day_pnl_raw += net_edge_raw
                 total_spread_cost_raw += spread_cost_raw
-                # Keep reported PnL in the same transformed space as the existing backtest output.
-                day_pnl += np.arcsinh(net_edge_raw)
+                if args.pnl_space == "raw":
+                    day_pnl += net_edge_raw
+                else:
+                    day_pnl += np.arcsinh(net_edge_raw)
                 
             recent_predictions.append(pred)
             
@@ -309,10 +318,10 @@ def main():
     print(f"  Total Valid Bursts Scanned:   {len(y) - len(y_train):,}")
     print(f"  Total Trades Fired:           {total_trades:,} ({total_longs:,} Long / {total_shorts:,} Short)")
     print(f"  Total Spread Cost (raw):      {total_spread_cost_raw:.4f}")
-    print(f"\n  Cumulative Simulated PnL:     {cum_pnl:.4f}")
+    print(f"\n  Cumulative Simulated PnL ({args.pnl_space}): {cum_pnl:.4f}")
     print(f"  Cumulative Sim PnL (raw):     {cum_pnl_raw_tracker:.4f}")
-    print(f"  Daily Mean PnL:               {mean_daily_pnl:.5f}")
-    print(f"  Daily StdDev (Variance):      {std_daily_pnl:.5f}")
+    print(f"  Daily Mean PnL ({args.pnl_space}):         {mean_daily_pnl:.5f}")
+    print(f"  Daily StdDev ({args.pnl_space}):           {std_daily_pnl:.5f}")
     print(f"  Annualized Sharpe Ratio:      {sharpe_ratio:.2f}")
     print("="*80)
 
