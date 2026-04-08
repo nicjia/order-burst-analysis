@@ -173,6 +173,10 @@ def main():
                         help="Space used for reported PnL/Sharpe. raw is dollar-like; transformed uses arcsinh compression")
     parser.add_argument("--adaptive-scaler", action="store_true",
                         help="Update StandardScaler online after each day (off by default for scale stability)")
+    parser.add_argument("--debug-trades-out", default="",
+                        help="Optional CSV path to write realized trade-level diagnostics")
+    parser.add_argument("--debug-signals-out", default="",
+                        help="Optional CSV path to write per-burst signal/gate diagnostics")
     
     args = parser.parse_args()
 
@@ -341,6 +345,20 @@ def main():
     total_spread_cost_raw = 0.0
     total_entry_spread_cost_raw = 0.0
     total_exit_spread_cost_raw = 0.0
+    total_gross_move_raw = 0.0
+
+    side_stats = {
+        1: {"name": "long", "trades": 0, "wins": 0, "gross": 0.0, "cost": 0.0, "net": 0.0},
+        -1: {"name": "short", "trades": 0, "wins": 0, "gross": 0.0, "cost": 0.0, "net": 0.0},
+    }
+
+    signal_evals = 0
+    signal_pass_long = 0
+    signal_pass_short = 0
+    signal_reject = 0
+
+    trade_rows = []
+    signal_rows = []
     
     # Keep rolling lookback of predictions (e.g., roughly 1000 burst predictions) to natively track dynamic 75th percentile
     recent_predictions = collections.deque(maxlen=1000) 
@@ -406,14 +424,46 @@ def main():
                     tr = open_trades.popleft()
                     if stream_quote_mode:
                         exit_px = float(exit_bid_day[i]) if tr["side"] > 0 else float(exit_ask_day[i])
-                        net_edge_raw = tr["side"] * tr["qty"] * (exit_px - tr["entry_px"])
+                        gross_edge_raw = tr["side"] * tr["qty"] * (exit_px - tr["entry_px"])
                         exit_cost_raw = 0.0
+                        net_edge_raw = gross_edge_raw
                     else:
                         exit_mid = float(mid_day[i])
                         exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
                         exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
                         gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
+                        gross_edge_raw = gross_mid_move_raw
                         net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
+                    gross_edge = gross_edge_raw if args.pnl_space == "raw" else np.arcsinh(gross_edge_raw)
+                    cost_edge = (tr["entry_cost_raw"] + exit_cost_raw) if args.pnl_space == "raw" else np.arcsinh(tr["entry_cost_raw"] + exit_cost_raw)
+                    net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+
+                    side_stats[tr["side"]]["trades"] += 1
+                    side_stats[tr["side"]]["wins"] += int(net_edge_raw > 0)
+                    side_stats[tr["side"]]["gross"] += gross_edge
+                    side_stats[tr["side"]]["cost"] += cost_edge
+                    side_stats[tr["side"]]["net"] += net_edge
+
+                    if args.debug_trades_out:
+                        hold_seconds = (current_ts - tr["entry_ts"]) / np.timedelta64(1, "s")
+                        trade_rows.append({
+                            "day": str(day),
+                            "execution_mode": "burst_stream",
+                            "entry_ts": str(tr["entry_ts"]),
+                            "exit_ts": str(current_ts),
+                            "hold_seconds": float(hold_seconds),
+                            "side": int(tr["side"]),
+                            "qty": float(tr["qty"]),
+                            "entry_cost_raw": float(tr["entry_cost_raw"]),
+                            "exit_cost_raw": float(exit_cost_raw),
+                            "gross_raw": float(gross_edge_raw),
+                            "net_raw": float(net_edge_raw),
+                            "pred": float(tr["pred"]),
+                            "pred_raw": float(np.sinh(tr["pred"])),
+                            "pred_move_per_share": float(np.sinh(tr["pred"]) / max(float(tr["burst_vol"]), 1e-12)),
+                            "gate": "" if np.isnan(tr["gate"]) else float(tr["gate"]),
+                            "burst_volume": float(tr["burst_vol"]),
+                        })
                     day_pnl_raw += net_edge_raw
                     total_exit_spread_cost_raw += exit_cost_raw
                     total_spread_cost_raw += exit_cost_raw
@@ -424,8 +474,12 @@ def main():
 
             burst_vol_i = float(vol_day[i])
             qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
+            pred_raw = np.sinh(pred)
+            pred_move_per_share = pred_raw / max(burst_vol_i, 1e-12)
+            signal_evals += 1
 
             side = 0
+            gate = np.nan
             if args.signal_mode == "percentile":
                 if pred > current_long_thresh:
                     side = 1
@@ -433,8 +487,6 @@ def main():
                     side = -1
             else:
                 # Cost-aware trigger: use predicted per-share move and require it to clear estimated round-trip spread costs.
-                pred_raw = np.sinh(pred)
-                pred_move_per_share = pred_raw / max(burst_vol_i, 1e-12)
                 spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
                 spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
                 per_share_cost = (
@@ -446,6 +498,27 @@ def main():
                     side = 1
                 elif pred_move_per_share < -gate:
                     side = -1
+
+            if side == 1:
+                signal_pass_long += 1
+            elif side == -1:
+                signal_pass_short += 1
+            else:
+                signal_reject += 1
+
+            if args.debug_signals_out:
+                signal_rows.append({
+                    "day": str(day),
+                    "ts": str(current_ts),
+                    "target": args.target,
+                    "pred": float(pred),
+                    "pred_raw": float(pred_raw),
+                    "pred_move_per_share": float(pred_move_per_share),
+                    "gate": "" if np.isnan(gate) else float(gate),
+                    "signal_side": int(side),
+                    "burst_volume": float(burst_vol_i),
+                    "qty": float(qty),
+                })
 
             if side != 0:
                 if side > 0:
@@ -476,6 +549,36 @@ def main():
                         total_exit_spread_cost_raw += exit_cost_raw
 
                     net_edge_raw = signed_edge_raw - spread_cost_raw
+                    gross_edge = signed_edge_raw if args.pnl_space == "raw" else np.arcsinh(signed_edge_raw)
+                    cost_edge = spread_cost_raw if args.pnl_space == "raw" else np.arcsinh(spread_cost_raw)
+                    net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+
+                    side_stats[side]["trades"] += 1
+                    side_stats[side]["wins"] += int(net_edge_raw > 0)
+                    side_stats[side]["gross"] += gross_edge
+                    side_stats[side]["cost"] += cost_edge
+                    side_stats[side]["net"] += net_edge
+
+                    if args.debug_trades_out:
+                        trade_rows.append({
+                            "day": str(day),
+                            "execution_mode": "label_proxy",
+                            "entry_ts": str(current_ts),
+                            "exit_ts": str(current_ts),
+                            "hold_seconds": 0.0,
+                            "side": int(side),
+                            "qty": float(qty),
+                            "entry_cost_raw": float(spread_cost_raw),
+                            "exit_cost_raw": 0.0,
+                            "gross_raw": float(signed_edge_raw),
+                            "net_raw": float(net_edge_raw),
+                            "pred": float(pred),
+                            "pred_raw": float(pred_raw),
+                            "pred_move_per_share": float(pred_move_per_share),
+                            "gate": "" if np.isnan(gate) else float(gate),
+                            "burst_volume": float(burst_vol_i),
+                        })
+
                     day_pnl_raw += net_edge_raw
                     total_spread_cost_raw += spread_cost_raw
                     if args.pnl_space == "raw":
@@ -506,6 +609,10 @@ def main():
                         "qty": qty,
                         "side": side,
                         "entry_cost_raw": entry_cost_raw,
+                        "entry_ts": current_ts,
+                        "pred": pred,
+                        "gate": gate,
+                        "burst_vol": burst_vol_i,
                     })
                 
             recent_predictions.append(pred)
@@ -562,6 +669,37 @@ def main():
     print(f"  Daily Mean PnL ({args.pnl_space}):         {mean_daily_pnl:.5f}")
     print(f"  Daily StdDev ({args.pnl_space}):           {std_daily_pnl:.5f}")
     print(f"  Annualized Sharpe Ratio:      {sharpe_ratio:.2f}")
+
+    if signal_evals > 0:
+        print("\n  Signal Diagnostics")
+        print(f"  Signals evaluated:            {signal_evals:,}")
+        print(f"  Signals passed long:          {signal_pass_long:,} ({100.0 * signal_pass_long / signal_evals:.2f}%)")
+        print(f"  Signals passed short:         {signal_pass_short:,} ({100.0 * signal_pass_short / signal_evals:.2f}%)")
+        print(f"  Signals rejected:             {signal_reject:,} ({100.0 * signal_reject / signal_evals:.2f}%)")
+
+    print("\n  Side Diagnostics")
+    for side_key in [1, -1]:
+        stats = side_stats[side_key]
+        trades = int(stats["trades"])
+        win_rate = (100.0 * stats["wins"] / trades) if trades > 0 else 0.0
+        avg_net = (stats["net"] / trades) if trades > 0 else 0.0
+        print(
+            f"  {stats['name'].capitalize():<6} trades={trades:>7,} "
+            f"win_rate={win_rate:>6.2f}% "
+            f"gross={stats['gross']:>10.4f} "
+            f"cost={stats['cost']:>10.4f} "
+            f"net={stats['net']:>10.4f} "
+            f"avg_net/trade={avg_net:>10.6f}"
+        )
+
+    if args.debug_trades_out:
+        pd.DataFrame(trade_rows).to_csv(args.debug_trades_out, index=False)
+        print(f"\n  Wrote trade diagnostics:       {args.debug_trades_out}")
+
+    if args.debug_signals_out:
+        pd.DataFrame(signal_rows).to_csv(args.debug_signals_out, index=False)
+        print(f"  Wrote signal diagnostics:      {args.debug_signals_out}")
+
     print("="*80)
 
 if __name__ == "__main__":
