@@ -31,7 +31,7 @@ echo "=========================================="
 
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 BASE_SILENCE=${BASE_SILENCE:-0.5}
-BASE_MIN_VOL=${BASE_MIN_VOL:-100}
+BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
 BASE_DIR_THRESH=${BASE_DIR_THRESH:-0.8}
 BASE_VOL_RATIO=${BASE_VOL_RATIO:-0.3}
 BASE_TAU_MAX=${BASE_TAU_MAX:-10.0}
@@ -97,7 +97,7 @@ if [ ! -f "${RAW_CSV}" ]; then
   echo "INFO: Running data_processor for ${TICKER}"
   ./data_processor "${STOCK_DIR}" "${RAW_CSV}" \
     -s "${BASE_SILENCE}" \
-    -v "${BASE_MIN_VOL}" \
+    -v "${BASE_VOL_FRAC}" \
     -d "${BASE_DIR_THRESH}" \
     -r "${BASE_VOL_RATIO}" \
     -k 0 \

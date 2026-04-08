@@ -53,7 +53,7 @@ FILTERED_SUFFIX=${FILTERED_SUFFIX:-baseline_filtered}
 # Default burst extraction params for model-selection baseline.
 # These should stay fixed while choosing the best model family.
 BASE_SILENCE=${BASE_SILENCE:-0.5}
-BASE_MIN_VOL=${BASE_MIN_VOL:-100}
+BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
 BASE_DIR_THRESH=${BASE_DIR_THRESH:-0.8}
 BASE_VOL_RATIO=${BASE_VOL_RATIO:-0.3}
 BASE_TAU_MAX=${BASE_TAU_MAX:-10.0}
@@ -110,7 +110,7 @@ prepare_one_ticker() {
         echo "INFO: Building baseline bursts for ${ticker} -> ${raw_csv}"
         ./data_processor "${ROOT}/data/${ticker}" "${raw_csv}" \
             -s "${BASE_SILENCE}" \
-            -v "${BASE_MIN_VOL}" \
+            -v "${BASE_VOL_FRAC}" \
             -d "${BASE_DIR_THRESH}" \
             -r "${BASE_VOL_RATIO}" \
             -k 0 \
@@ -177,7 +177,7 @@ prepare_all_baselines() {
     echo "=========================================="
     echo "Baseline Preparation (Sequential)"
     echo "  Tickers:      ${TICKERS}"
-    echo "  Params:       s=${BASE_SILENCE} v=${BASE_MIN_VOL} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO}"
+    echo "  Params:       s=${BASE_SILENCE} v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO}"
     echo "  Kappa long:   ${BASE_KAPPA_LONG}"
     echo "  Workers:      ${PREP_WORKERS}"
     echo "  Force rebuild:${FORCE_REBUILD_BASELINE}"
@@ -221,7 +221,7 @@ echo "  Job ID:       ${JOB_ID}"
 echo "  Task ID:      ${SGE_TASK_ID}  (0-based index: ${INDEX})"
 echo "  Phase:        ${TARGET}"
 echo "  Input suffix (short/long): ${UNFILTERED_SUFFIX} / ${FILTERED_SUFFIX}"
-echo "  Baseline params: s=${BASE_SILENCE} v=${BASE_MIN_VOL} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO} k_long=${BASE_KAPPA_LONG}"
+echo "  Baseline params: s=${BASE_SILENCE} v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO} k_long=${BASE_KAPPA_LONG}"
 echo "  Force rebuild baseline: ${FORCE_REBUILD_BASELINE}"
 echo "  Tickers:      ${TICKERS}"
 echo "  Hostname:     $(hostname)"

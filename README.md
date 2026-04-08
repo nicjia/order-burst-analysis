@@ -34,7 +34,7 @@ make clean && make
 Run the processor:
 
 ```shell
-./data_processor data/TSLA_folder/ results/bursts_TSLA.csv -s 0.5 -v 100 -d 0.8 -k 0 -t 10.0 -j 8
+./data_processor data/TSLA_folder/ results/bursts_TSLA.csv -s 0.5 -v 0.0001 -d 0.8 -k 0 -t 10.0 -j 8
 ```
 
 The engine scans chronological order submissions and groups them into discrete bursts based on temporal proximity and directional consistency. It simultaneously tracks the Best Bid and Best Ask to record market state features. To avoid look-ahead bias in the machine learning phase, ensure you pass `-k 0` (kappa = 0) so the engine outputs all bursts regardless of their future 10-minute decay. The Db filtering rule will be applied dynamically in Python.

@@ -1,10 +1,10 @@
 #include "burst.h"
 #include <cmath> // Required for std::abs
 
-BurstDetector::BurstDetector(double silence_threshold, int min_volume, double direction_threshold,
+BurstDetector::BurstDetector(double silence_threshold, double min_volume_threshold, double direction_threshold,
                              double volume_ratio_threshold) 
     : silence_threshold_(silence_threshold), 
-      min_volume_(min_volume),
+    min_volume_threshold_(min_volume_threshold),
       direction_threshold_(direction_threshold),
       volume_ratio_threshold_(volume_ratio_threshold),
       is_active_(false), 
@@ -84,8 +84,7 @@ void BurstDetector::classify_direction() {
 
 // ── FILTER: is this burst worth keeping? ────────────────────
 bool BurstDetector::passes_filter() {
-    (void)min_volume_; 
-    return current_burst_.volume >= min_volume_;
+    return (double)current_burst_.volume >= min_volume_threshold_;
 }
 
 // ─────────────────────────────────────────────────────────────

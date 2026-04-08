@@ -63,7 +63,7 @@ for TICKER in ${TICKER_LIST}; do
         "${ROOT}/data/${TICKER}" \
         "${RAW_CSV}" \
         -s "${S}" \
-        -v 1 \
+        -v 0 \
         -d 0.5 \
         -r 1.0 \
         -k 0 \

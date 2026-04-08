@@ -27,10 +27,10 @@ struct Burst {
 class BurstDetector {
 public:
     // silence_threshold: time gap (seconds) that ends a burst
-    // min_volume: minimum total volume for a burst to be output
+    // min_volume_threshold: minimum total volume for a burst to be output
     // direction_threshold: ratio (e.g., 0.7) of buy/total or sell/total to classify direction
     // volume_ratio_threshold: max minority_vol / majority_vol ratio (e.g., 0.5) for directional bursts
-    BurstDetector(double silence_threshold, int min_volume, double direction_threshold,
+    BurstDetector(double silence_threshold, double min_volume_threshold, double direction_threshold,
                   double volume_ratio_threshold = 0.5);
     
     // Returns true if a burst just finished (and passed filters)
@@ -59,7 +59,7 @@ private:
     // ─────────────────────────────────────────────────────────
     
     double silence_threshold_;
-    int min_volume_;
+    double min_volume_threshold_;
     double direction_threshold_;
     double volume_ratio_threshold_;
     

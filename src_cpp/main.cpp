@@ -29,6 +29,7 @@
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
+#include <numeric>
 
 #include "parser.h"
 #include "types.h"
@@ -196,6 +197,18 @@ struct DayResult {
     size_t burst_kept = 0;
 };
 
+// Compute total RTH trade volume (LOBSTER types 4/5) for one day file.
+long long compute_rth_trade_volume(const std::string& msg_file, double rth_start, double rth_end) {
+    LobsterParser parser(msg_file);
+    LobsterMessage msg;
+    long long vol = 0;
+    while (parser.next_message(msg)) {
+        if (msg.time < rth_start || msg.time > rth_end) continue;
+        if (msg.type == 4 || msg.type == 5) vol += (long long)msg.size;
+    }
+    return vol;
+}
+
 // ── Usage ───────────────────────────────────────────────────
 
 void print_usage(const char* prog) {
@@ -204,7 +217,8 @@ void print_usage(const char* prog) {
               << "  output_file:  output CSV path\n"
               << "Options:\n"
               << "  -s <silence>    silence threshold in seconds       (default: 1.0)\n"
-              << "  -v <min_vol>    minimum burst volume in shares     (default: 100)\n"
+              << "  -v <vol_frac>   burst volume fraction of trailing\n"
+              << "                  14-day avg RTH trade volume         (default: 0.0001)\n"
               << "  -d <direction>  direction count-ratio threshold    (default: 0.9)\n"
               << "  -r <vol_ratio>  volume ratio cap for directional   (default: 0.5)\n"
               << "  -k <kappa>      kappa filter parameter             (default: 0.5)\n"
@@ -237,7 +251,7 @@ int main(int argc, char* argv[]) {
     }
 
     double silence_threshold   = 1.0;
-    int    min_volume          = 100;
+    double volume_fraction     = 0.0001;
     double direction_threshold = 0.9;
     double volume_ratio_threshold = 0.5;  // minority_vol / majority_vol cap for directional classification
     double kappa               = 0.5;
@@ -250,7 +264,7 @@ int main(int argc, char* argv[]) {
         if (i + 1 >= argc) break;
         std::string opt = argv[i];
         if      (opt == "-s") silence_threshold   = std::stod(argv[i+1]);
-        else if (opt == "-v") min_volume          = std::stoi(argv[i+1]);
+        else if (opt == "-v") volume_fraction     = std::stod(argv[i+1]);
         else if (opt == "-d") direction_threshold = std::stod(argv[i+1]);
         else if (opt == "-r") volume_ratio_threshold = std::stod(argv[i+1]);
         else if (opt == "-k") kappa               = std::stod(argv[i+1]);
@@ -269,10 +283,46 @@ int main(int argc, char* argv[]) {
 
     std::string ticker = extract_ticker(stock_folder);
 
+    if (volume_fraction < 0.0 || volume_fraction > 1.0) {
+        std::cerr << "Error: -v must be a fraction in [0, 1]. Received: " << volume_fraction << "\n"
+                  << "Example: -v 0.0001 means burst volume >= 0.01% of trailing 14-day avg daily RTH trade volume.\n";
+        return 1;
+    }
+
+    // Precompute per-day dynamic thresholds in strict date order.
+    // Threshold(day) = vol_frac * mean(RTH daily trade volume over prior 14 days).
+    // For first day(s) with no prior history, bootstrap with current day volume.
+    const size_t ADV_WINDOW = 14;
+    std::vector<long long> day_trade_volumes(msg_files.size(), 0);
+    std::vector<double> day_min_volume_thresholds(msg_files.size(), 0.0);
+    std::deque<long long> adv_history;
+    long long adv_history_sum = 0;
+
+    for (size_t i = 0; i < msg_files.size(); ++i) {
+        long long day_vol = compute_rth_trade_volume(msg_files[i], rth_start, rth_end);
+        day_trade_volumes[i] = day_vol;
+
+        double trailing_adv = 0.0;
+        if (!adv_history.empty()) {
+            trailing_adv = (double)adv_history_sum / (double)adv_history.size();
+        } else {
+            trailing_adv = (double)day_vol;
+        }
+        day_min_volume_thresholds[i] = volume_fraction * trailing_adv;
+
+        adv_history.push_back(day_vol);
+        adv_history_sum += day_vol;
+        if (adv_history.size() > ADV_WINDOW) {
+            adv_history_sum -= adv_history.front();
+            adv_history.pop_front();
+        }
+    }
+
     std::cout << "Ticker: " << ticker << "\n";
     std::cout << "Found " << msg_files.size() << " day file(s)\n";
     std::cout << "Settings: silence=" << silence_threshold
-              << "  min_vol=" << min_volume
+              << "  vol_frac=" << volume_fraction
+              << "  adv_window=14"
               << "  dir_thresh=" << direction_threshold
               << "  vol_ratio_thresh=" << volume_ratio_threshold
               << "  kappa=" << kappa
@@ -312,12 +362,20 @@ int main(int argc, char* argv[]) {
 
         // Fresh book & detector per day (pre-open rebuilds the book)
         OrderBook     book;
-        BurstDetector detector(silence_threshold, min_volume, direction_threshold, volume_ratio_threshold);
+        BurstDetector detector(
+            silence_threshold,
+            day_min_volume_thresholds[day_idx],
+            direction_threshold,
+            volume_ratio_threshold
+        );
         LobsterParser parser(msg_file);
 
         // Mid-price snapshots: only recorded when mid actually changes.
         // Used after the day loop for forward-return lookups.
         std::vector<std::pair<double, double>> mid_snapshots;
+            std::cout << "        rolling_min_volume=" << std::fixed << std::setprecision(2)
+                      << day_min_volume_thresholds[day_idx]
+                      << " (rth_day_volume=" << day_trade_volumes[day_idx] << ")\n";
         mid_snapshots.reserve(500000);
         std::vector<BboSnapshot> bbo_snapshots;
         bbo_snapshots.reserve(500000);

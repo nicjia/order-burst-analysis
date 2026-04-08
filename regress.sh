@@ -64,7 +64,18 @@ for TICKER in ${TICKERS}; do
             # Parse parameters natively in bash from the CNAME
             IFS='_' read -ra PARTS <<< "$CNAME"
             S_VAL=${PARTS[0]:1} ; S_VAL=${S_VAL//p/.}
-            V_VAL=${PARTS[1]:1}
+            if [[ "${PARTS[1]}" == vf* ]]; then
+                V_VAL=${PARTS[1]:2}
+            else
+                V_VAL=${PARTS[1]:1}
+                if [[ "${V_VAL}" != *p* ]] && [ "${V_VAL}" -gt 1 ] 2>/dev/null; then
+                    echo "ERROR: Legacy config tag '${CNAME}' encodes absolute volume (${PARTS[1]})," >&2
+                    echo "       but data_processor now requires fractional -v in [0,1] using rolling 14-day ADV." >&2
+                    echo "       Rename configs to use 'vf...' tags (example: vf0p0001) before rerunning regress.sh." >&2
+                    exit 1
+                fi
+            fi
+            V_VAL=${V_VAL//p/.}
             D_VAL=${PARTS[2]:1} ; D_VAL=${D_VAL//p/.}
             R_VAL=${PARTS[3]:1} ; R_VAL=${R_VAL//p/.}
             

@@ -72,7 +72,7 @@ echo "=============================================="
 if [ ! -f "${BURSTS_CSV}" ]; then
   stage_time "DATA_PROCESSOR_BASELINE" \
     ./data_processor "${ROOT}/data/${TICKER}" "${BURSTS_CSV}" \
-    -s 1.0 -v 1 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
+    -s 1.0 -v 0 -d 0.5 -r 1.0 -k 0 -t 10.0 -j "${WORKERS}" -b 34200 -e 57600
 fi
 
 if [ ! -f "${MASTER_FILTERED_CSV}" ]; then

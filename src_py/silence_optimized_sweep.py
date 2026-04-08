@@ -221,7 +221,7 @@ def main():
                 args.stock_folder,
                 str(raw_csv),
                 "-s", str(s),
-                "-v", "1",
+                "-v", "0",
                 "-d", "0.5",
                 "-r", "1.0",
                 "-k", "0",
