@@ -2022,3 +2022,46 @@ Recommended primary profitability metrics (and now reported above):
 - `Cumulative Simulated PnL (raw)` as a secondary context metric
 
 These are the right replacements for legacy raw "Net Perm" when evaluating executable, gated trading behavior.
+
+### 14.4 Hoffman Overnight Batch (`12890943`, 2026-04-09)
+
+#### 14.4.1 Execution Health
+- Batch status: completed cleanly for all four array tasks.
+- `qstat -u nicjia`: empty after completion.
+- Error scan on `logs/overnight_bt_12890943_*.out`: no `Traceback`, no `Input y contains NaN`, no `ERROR: line`.
+- Completion markers found:
+  - `Overnight backtests complete for NVDA`
+  - `Overnight backtests complete for TSLA`
+  - `Overnight backtests complete for JPM`
+  - `Overnight backtests complete for MS`
+
+#### 14.4.2 Pulled Artifacts (Local Snapshot)
+- Pull root: `hoffman_pull_20260409_overnight/`
+- Job logs: `hoffman_pull_20260409_overnight/logs/overnight_bt_12890943_*.out`
+- Main result files pulled from Hoffman: 24 files (8 strategy runs x `.log`, `_debug_trades.csv`, `_debug_signals.csv`)
+- Result directory: `hoffman_pull_20260409_overnight/results/overnight_backtests/`
+- Analyzer script (temporary): `tmp_analyze_overnight_12890943.py`
+- Analyzer outputs:
+  - `hoffman_pull_20260409_overnight/analysis/overnight_12890943_metrics.csv`
+  - `hoffman_pull_20260409_overnight/analysis/overnight_12890943_summary.md`
+
+#### 14.4.3 Consolidated Run Metrics (from pulled `.log` files)
+| Ticker | Target | Trades | Cum PnL (raw) | Sharpe | Dropped non-finite rows |
+|---|---|---:|---:|---:|---:|
+| JPM | reg_clcl | 409,968 | -15,903,610.56 | -2.50 | 1,237 |
+| JPM | reg_clop | 22 | -313,474.70 | -0.58 | 39 |
+| MS | reg_clcl | 2,302 | -187,958.10 | -0.76 | 47 |
+| MS | reg_clop | 5,822 | -297,268.07 | -1.19 | 32 |
+| NVDA | reg_clcl | 701 | 118,711,049.88 | 1.58 | 42 |
+| NVDA | reg_clop | 1,857 | 181,747,889.84 | 1.17 | 65 |
+| TSLA | reg_clcl | 0 | 0.00 | 0.00 | 9 |
+| TSLA | reg_clop | 0 | 0.00 | 0.00 | 6 |
+
+#### 14.4.4 Batch-Level Aggregates
+- By target:
+  - `reg_clcl`: 412,971 trades, cumulative PnL `102,619,481.22`, mean Sharpe `-0.42`.
+  - `reg_clop`: 7,701 trades, cumulative PnL `181,137,147.07`, mean Sharpe `-0.15`.
+- By ticker:
+  - `NVDA`: strong positive result in both overnight targets (combined PnL `300,458,939.72`, mean Sharpe `1.375`).
+  - `JPM` and `MS`: negative in both overnight targets for this run.
+  - `TSLA`: zero triggered trades under selected cost-aware gates for both overnight targets.

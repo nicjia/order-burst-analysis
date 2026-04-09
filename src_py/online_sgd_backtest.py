@@ -149,8 +149,8 @@ def main():
                         help="Exit-side spread multiplier (0.5=half spread at exit)")
     parser.add_argument("--execution-mode", choices=["label_proxy", "burst_stream"], default="burst_stream",
                         help="label_proxy uses permanence labels for realized edge; burst_stream uses event-time round-trip fills")
-    parser.add_argument("--signal-mode", choices=["percentile", "cost_aware"], default="percentile",
-                        help="Trade trigger mode: percentile thresholds or cost-aware edge gating")
+    parser.add_argument("--signal-mode", choices=["percentile", "cost_aware", "direction"], default="percentile",
+                        help="Trade trigger mode: percentile thresholds, cost-aware edge gating, or sign(prediction) direction")
     parser.add_argument("--cost-buffer-mult", type=float, default=1.0,
                         help="Safety multiplier for spread cost in cost_aware mode (1.0 means edge must exceed estimated costs)")
     parser.add_argument("--mid-col", default="EndPrice",
@@ -505,7 +505,7 @@ def main():
                     side = 1
                 elif pred < current_short_thresh:
                     side = -1
-            else:
+            elif args.signal_mode == "cost_aware":
                 # Cost-aware trigger: use predicted per-share move and require it to clear estimated round-trip spread costs.
                 spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
                 spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
@@ -517,6 +517,12 @@ def main():
                 if pred_move_per_share > gate:
                     side = 1
                 elif pred_move_per_share < -gate:
+                    side = -1
+            else:
+                # Direction-only trigger: trade purely on predicted sign.
+                if pred > 0:
+                    side = 1
+                elif pred < 0:
                     side = -1
 
             if side == 1:
@@ -660,8 +666,10 @@ def main():
             day_str = str(day).split()[0]
             if args.signal_mode == "percentile":
                 trigger_info = f"Rolling Thresholds L>{current_long_thresh:.3f} S<{current_short_thresh:.3f}"
-            else:
+            elif args.signal_mode == "cost_aware":
                 trigger_info = f"CostAware buffer={args.cost_buffer_mult:.2f}"
+            else:
+                trigger_info = "Direction sign gate"
             print(f"[{day_str}] Walk-Forward Day {day_idx}/{len(remaining_days)} "
                   f"| CumPnL: {cum_pnl_tracker:7.3f} "
                   f"| Trades Executed: {total_trades:5d} "

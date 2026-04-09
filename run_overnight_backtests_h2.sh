@@ -44,6 +44,12 @@ DEFAULT_DATA_TEMPLATE=${DEFAULT_DATA_TEMPLATE:-"results/bursts_%s_baseline_unfil
 COST_BUFFER_MULT=${COST_BUFFER_MULT:-1.0}
 EXECUTION_MODE=${EXECUTION_MODE:-burst_stream}
 SIGNAL_MODE=${SIGNAL_MODE:-cost_aware}
+POSITION_MODE=${POSITION_MODE:-fraction}
+POSITION_SIZE_MULT=${POSITION_SIZE_MULT:-1.0}
+SHARES_PER_TRADE=${SHARES_PER_TRADE:-1.0}
+SPREAD_COL=${SPREAD_COL:-Spread}
+SPREAD_MULTIPLIER=${SPREAD_MULTIPLIER:-0.5}
+SPREAD_EXIT_MULTIPLIER=${SPREAD_EXIT_MULTIPLIER:-0.5}
 
 # Optional date window overrides for online_sgd_backtest.py defaults.
 # Keep empty to use script defaults.
@@ -130,6 +136,12 @@ run_one_target() {
     --execution-mode "${EXECUTION_MODE}"
     --signal-mode "${SIGNAL_MODE}"
     --cost-buffer-mult "${COST_BUFFER_MULT}"
+    --position-mode "${POSITION_MODE}"
+    --position-size-mult "${POSITION_SIZE_MULT}"
+    --shares-per-trade "${SHARES_PER_TRADE}"
+    --spread-col "${SPREAD_COL}"
+    --spread-multiplier "${SPREAD_MULTIPLIER}"
+    --spread-exit-multiplier "${SPREAD_EXIT_MULTIPLIER}"
     --debug-trades-out "${out_prefix}_debug_trades.csv"
     --debug-signals-out "${out_prefix}_debug_signals.csv"
   )
