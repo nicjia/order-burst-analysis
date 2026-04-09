@@ -32,6 +32,8 @@ TARGET_MAP = {
     'reg_10m':    ('Perm_t10m',   'regression', None),
 }
 
+PATCH_VERSION = "nan-guard-v4-20260409"
+
 def build_target(df, target_key):
     col, task, threshold = TARGET_MAP[target_key]
     if col not in df.columns:
@@ -181,6 +183,7 @@ def main():
     args = parser.parse_args()
 
     print(f"========== ONLINE SGD REGIME BACKTESTER ==========")
+    print(f"Patch:   {PATCH_VERSION}")
     print(f"Data:    {args.data}")
     print(f"Target:  {args.target}")
     print(f"Filters: {args.silence_tag}, vf={args.vol_frac}, d={args.dir_thresh}, r={args.vol_ratio}\n")
@@ -645,7 +648,12 @@ def main():
                 X_day_for_fit = scaler.transform(X_day_fit)
             else:
                 X_day_for_fit = scaler.transform(X_day_fit)
-            model.partial_fit(X_day_for_fit, y_day_fit)
+            fit_finite = np.isfinite(y_day_fit) & np.all(np.isfinite(X_day_for_fit), axis=1)
+            if not np.all(fit_finite):
+                bad = int((~fit_finite).sum())
+                print(f"WARNING: Skipping {bad} non-finite fit rows on {str(day).split()[0]} before partial_fit.")
+            if np.any(fit_finite):
+                model.partial_fit(X_day_for_fit[fit_finite], y_day_fit[fit_finite])
 
         # Progress timeline every ~1 month (20 trading days)
         if day_idx % 20 == 0:
