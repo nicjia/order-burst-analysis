@@ -7,8 +7,9 @@
 #$ -l h_data=10G,h_rt=12:00:00
 #$ -pe shared 4
 
-set -Eeo pipefail
-trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+# Do not enable errexit before module init scripts; some Hoffman init snippets
+# intentionally return non-zero during probing.
+set -o pipefail
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
@@ -28,6 +29,10 @@ module load gcc/10.2.0
 module load python/3.9.6
 
 source "${ROOT}/.venv/bin/activate"
+
+# Enable strict mode only after environment setup.
+set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 echo "Python: $(which python3)"
 python3 --version
