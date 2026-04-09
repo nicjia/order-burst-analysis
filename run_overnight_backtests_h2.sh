@@ -50,6 +50,13 @@ SHARES_PER_TRADE=${SHARES_PER_TRADE:-1.0}
 SPREAD_COL=${SPREAD_COL:-Spread}
 SPREAD_MULTIPLIER=${SPREAD_MULTIPLIER:-0.5}
 SPREAD_EXIT_MULTIPLIER=${SPREAD_EXIT_MULTIPLIER:-0.5}
+DAILY_OPEN_CSV=${DAILY_OPEN_CSV:-open_all.csv}
+DAILY_CLOSE_CSV=${DAILY_CLOSE_CSV:-close_all.csv}
+PHASE3_THRESH=${PHASE3_THRESH:-0.0}
+PHASE3_MIN_LAG_MINUTES=${PHASE3_MIN_LAG_MINUTES:-10.0}
+PHASE3_FLOW_COL=${PHASE3_FLOW_COL:-signed_volume}
+TICKER_OVERRIDE=${TICKER_OVERRIDE:-}
+TARGETS=${TARGETS:-"reg_clop reg_clcl"}
 
 # Optional date window overrides for online_sgd_backtest.py defaults.
 # Keep empty to use script defaults.
@@ -96,9 +103,27 @@ print(p.get("kappa", 0.0))
 PY
 }
 
+cls_key_for_target() {
+  local target="$1"
+  case "${target}" in
+    reg_clop) echo "cls_clop" ;;
+    reg_clcl) echo "cls_clcl" ;;
+    reg_close) echo "cls_close" ;;
+    reg_1m) echo "cls_1m" ;;
+    reg_3m) echo "cls_3m" ;;
+    reg_5m) echo "cls_5m" ;;
+    reg_10m) echo "cls_10m" ;;
+    *) return 1 ;;
+  esac
+}
+
 run_one_target() {
-  local target="$1"      # reg_clop or reg_clcl
-  local cls_key="$2"     # cls_clop or cls_clcl
+  local target="$1"
+  local cls_key
+  cls_key=$(cls_key_for_target "${target}") || {
+    echo "ERROR: Unsupported target '${target}'" >&2
+    return 1
+  }
   local json_file="results/optuna_physical/${TICKER}/best_physical_params_${cls_key}.json"
 
   if [ ! -f "${json_file}" ]; then
@@ -142,9 +167,20 @@ run_one_target() {
     --spread-col "${SPREAD_COL}"
     --spread-multiplier "${SPREAD_MULTIPLIER}"
     --spread-exit-multiplier "${SPREAD_EXIT_MULTIPLIER}"
+    --daily-open-csv "${DAILY_OPEN_CSV}"
+    --daily-close-csv "${DAILY_CLOSE_CSV}"
+    --phase3-thresh "${PHASE3_THRESH}"
+    --phase3-min-lag-minutes "${PHASE3_MIN_LAG_MINUTES}"
+    --phase3-flow-col "${PHASE3_FLOW_COL}"
     --debug-trades-out "${out_prefix}_debug_trades.csv"
     --debug-signals-out "${out_prefix}_debug_signals.csv"
   )
+
+  if [ -n "${TICKER_OVERRIDE}" ]; then
+    cmd+=(--ticker "${TICKER_OVERRIDE}")
+  else
+    cmd+=(--ticker "${TICKER}")
+  fi
 
   if [ -n "${START_DATE}" ]; then
     cmd+=(--start-date "${START_DATE}")
@@ -156,7 +192,8 @@ run_one_target() {
   "${cmd[@]}" | tee "${out_prefix}.log"
 }
 
-run_one_target reg_clop cls_clop
-run_one_target reg_clcl cls_clcl
+for target in ${TARGETS}; do
+  run_one_target "${target}"
+done
 
 echo "Overnight backtests complete for ${TICKER}"

@@ -32,7 +32,7 @@ TARGET_MAP = {
     'reg_10m':    ('Perm_t10m',   'regression', None),
 }
 
-PATCH_VERSION = "nan-guard-v4-20260409"
+PATCH_VERSION = "phase3-flow-v1-20260409"
 
 def build_target(df, target_key):
     col, task, threshold = TARGET_MAP[target_key]
@@ -126,6 +126,12 @@ def is_close_style_target(target_key):
         "cls_close", "cls_clop", "cls_clcl",
     }
 
+
+def load_price_matrix(csv_path):
+    px = pd.read_csv(csv_path, index_col="date")
+    px.index = pd.Index(px.index).astype(int)
+    return px
+
 warnings.filterwarnings("ignore")
 
 def main():
@@ -147,8 +153,8 @@ def main():
                         help="Optional horizon spread column; if missing/empty, fallback uses entry spread column")
     parser.add_argument("--spread-exit-multiplier", type=float, default=0.5,
                         help="Exit-side spread multiplier (0.5=half spread at exit)")
-    parser.add_argument("--execution-mode", choices=["label_proxy", "burst_stream"], default="burst_stream",
-                        help="label_proxy uses permanence labels for realized edge; burst_stream uses event-time round-trip fills")
+    parser.add_argument("--execution-mode", choices=["label_proxy", "burst_stream", "phase3_flow"], default="burst_stream",
+                        help="label_proxy uses permanence labels; burst_stream uses event-time fills; phase3_flow aggregates predicted informational bursts into a daily flow signal")
     parser.add_argument("--signal-mode", choices=["percentile", "cost_aware", "direction"], default="percentile",
                         help="Trade trigger mode: percentile thresholds, cost-aware edge gating, or sign(prediction) direction")
     parser.add_argument("--cost-buffer-mult", type=float, default=1.0,
@@ -179,6 +185,18 @@ def main():
                         help="Optional CSV path to write realized trade-level diagnostics")
     parser.add_argument("--debug-signals-out", default="",
                         help="Optional CSV path to write per-burst signal/gate diagnostics")
+    parser.add_argument("--ticker", default="",
+                        help="Ticker override for daily price matrix lookup in phase3_flow mode")
+    parser.add_argument("--daily-open-csv", default="",
+                        help="Open price matrix CSV (index=date, columns=tickers) for phase3_flow CLOP exits")
+    parser.add_argument("--daily-close-csv", default="",
+                        help="Close price matrix CSV (index=date, columns=tickers) for phase3_flow CLCL/CLOP entries")
+    parser.add_argument("--phase3-thresh", type=float, default=0.0,
+                        help="Informational-burst threshold theta on predicted permanence for phase3_flow")
+    parser.add_argument("--phase3-min-lag-minutes", type=float, default=10.0,
+                        help="Minimum lag after burst before eligibility in phase3_flow")
+    parser.add_argument("--phase3-flow-col", choices=["signed_volume", "volume"], default="signed_volume",
+                        help="Flow aggregation component Q_b for phase3_flow")
     
     args = parser.parse_args()
 
@@ -259,6 +277,11 @@ def main():
         else:
             horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
             print(f"Hold horizon: {horizon_minutes:.2f} minutes")
+    elif args.execution_mode == "phase3_flow":
+        print(
+            "Phase3 flow mode: aggregate predicted-informational bursts into daily signal "
+            f"(theta={args.phase3_thresh}, lag={args.phase3_min_lag_minutes:.2f}m, Q_b={args.phase3_flow_col})"
+        )
         
     print(f"Dataset securely shrunk from {len(df):,} to {len(filtered):,} perfectly valid true bursts.\n")
     
@@ -392,6 +415,54 @@ def main():
         horizon_minutes = args.horizon_minutes if args.horizon_minutes is not None else infer_horizon_minutes(args.target)
         hold_delta = np.timedelta64(int(round(horizon_minutes * 60)), "s")
 
+    # Phase-III flow execution needs daily close/open matrices for true CLCL/CLOP returns.
+    phase3_ticker = ""
+    close_px = None
+    open_px = None
+    trading_days_px = None
+    phase3_lag_delta = np.timedelta64(int(round(max(args.phase3_min_lag_minutes, 0.0) * 60)), "s")
+    if args.execution_mode == "phase3_flow":
+        if args.target not in {"reg_clcl", "reg_clop"}:
+            print("ERROR: phase3_flow currently supports long-horizon targets reg_clcl/reg_clop.")
+            sys.exit(1)
+        if not args.daily_close_csv:
+            print("ERROR: --daily-close-csv is required for phase3_flow.")
+            sys.exit(1)
+        if not os.path.exists(args.daily_close_csv):
+            print(f"ERROR: Cannot find daily close matrix: {args.daily_close_csv}")
+            sys.exit(1)
+
+        close_px = load_price_matrix(args.daily_close_csv)
+        if args.target == "reg_clop":
+            if not args.daily_open_csv:
+                print("ERROR: --daily-open-csv is required for reg_clop in phase3_flow.")
+                sys.exit(1)
+            if not os.path.exists(args.daily_open_csv):
+                print(f"ERROR: Cannot find daily open matrix: {args.daily_open_csv}")
+                sys.exit(1)
+            open_px = load_price_matrix(args.daily_open_csv)
+
+        phase3_ticker = args.ticker.strip()
+        if not phase3_ticker:
+            if "Ticker" in filtered.columns:
+                uniq_tickers = filtered["Ticker"].astype(str).dropna().unique().tolist()
+                if len(uniq_tickers) == 1:
+                    phase3_ticker = uniq_tickers[0]
+        if not phase3_ticker:
+            print("ERROR: Could not infer ticker for phase3_flow. Pass --ticker.")
+            sys.exit(1)
+        if phase3_ticker not in close_px.columns:
+            print(f"ERROR: Ticker '{phase3_ticker}' missing in daily close matrix.")
+            sys.exit(1)
+        if open_px is not None and phase3_ticker not in open_px.columns:
+            print(f"ERROR: Ticker '{phase3_ticker}' missing in daily open matrix.")
+            sys.exit(1)
+
+        trading_days_px = np.array(sorted(pd.Index(close_px.index).astype(int).tolist()), dtype=np.int64)
+        print(f"Phase3 price source: ticker={phase3_ticker}, close_csv={args.daily_close_csv}")
+        if open_px is not None:
+            print(f"Phase3 open source: {args.daily_open_csv}")
+
     for day_idx, day in enumerate(remaining_days):
         day_mask = (filtered['DateCol'] == day).values
         if day_mask.sum() == 0:
@@ -434,9 +505,121 @@ def main():
         day_pnl = 0.0
         day_pnl_raw = 0.0
 
-        # 4. Trigger simulated entries blindly strictly if they hit conviction thresholds
-        for i, pred in enumerate(preds):
-            current_ts = event_ts_day[i]
+        # 4. Trigger simulated entries
+        if args.execution_mode == "phase3_flow":
+            # Phase III: classify informational bursts on predicted permanence,
+            # aggregate into a daily order-flow signal, then trade close->next close/open.
+            informational = preds > args.phase3_thresh
+            lag_eligible = (day_end_ts - event_ts_day) >= phase3_lag_delta
+            selected = informational & lag_eligible
+            q_component = vol_day.copy()
+            if args.phase3_flow_col == "signed_volume" and "Direction" in day_df.columns:
+                dir_day = day_df["Direction"].to_numpy(dtype=float)
+                q_component = q_component * dir_day
+            flow_signal = float(np.nansum(q_component[selected])) if np.any(selected) else 0.0
+
+            signal_evals += 1
+            side = 1 if flow_signal > 0 else (-1 if flow_signal < 0 else 0)
+            gate = float(args.phase3_thresh)
+            if side == 1:
+                signal_pass_long += 1
+            elif side == -1:
+                signal_pass_short += 1
+            else:
+                signal_reject += 1
+
+            if args.debug_signals_out:
+                signal_rows.append({
+                    "day": str(day),
+                    "ts": str(day_end_ts),
+                    "target": args.target,
+                    "pred": float(np.nanmean(preds)) if len(preds) else 0.0,
+                    "pred_raw": float(np.sinh(np.nanmean(preds))) if len(preds) else 0.0,
+                    "pred_move_per_share": float(np.nanmean(np.sinh(preds) / np.maximum(vol_day, 1e-12))) if len(preds) else 0.0,
+                    "gate": gate,
+                    "signal_side": int(side),
+                    "burst_volume": float(np.nansum(vol_day[selected])) if np.any(selected) else 0.0,
+                    "qty": float(np.abs(flow_signal) * args.position_size_mult) if args.position_mode != "shares" else float(args.shares_per_trade),
+                    "selected_bursts": int(selected.sum()),
+                    "eligible_bursts": int(lag_eligible.sum()),
+                    "informational_bursts": int(informational.sum()),
+                    "flow_signal": float(flow_signal),
+                })
+
+            if side != 0:
+                entry_day_int = int(pd.Timestamp(day).strftime("%Y%m%d"))
+                next_idx = np.searchsorted(trading_days_px, entry_day_int, side="right")
+                if next_idx < len(trading_days_px) and entry_day_int in close_px.index:
+                    next_day_int = int(trading_days_px[next_idx])
+                    entry_px = float(close_px.at[entry_day_int, phase3_ticker])
+                    if np.isnan(entry_px):
+                        side = 0
+                    else:
+                        if args.target == "reg_clcl":
+                            if next_day_int in close_px.index:
+                                exit_px = float(close_px.at[next_day_int, phase3_ticker])
+                            else:
+                                exit_px = np.nan
+                        else:
+                            if next_day_int in open_px.index:
+                                exit_px = float(open_px.at[next_day_int, phase3_ticker])
+                            else:
+                                exit_px = np.nan
+
+                        if not np.isnan(exit_px):
+                            qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * max(abs(flow_signal), 0.0))
+                            gross_edge_raw = side * qty * (exit_px - entry_px)
+                            spread_cost_raw = 0.0
+                            net_edge_raw = gross_edge_raw - spread_cost_raw
+                            gross_edge = gross_edge_raw if args.pnl_space == "raw" else np.arcsinh(gross_edge_raw)
+                            cost_edge = spread_cost_raw if args.pnl_space == "raw" else np.arcsinh(spread_cost_raw)
+                            net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+
+                            side_stats[side]["trades"] += 1
+                            side_stats[side]["wins"] += int(net_edge_raw > 0)
+                            side_stats[side]["gross"] += gross_edge
+                            side_stats[side]["cost"] += cost_edge
+                            side_stats[side]["net"] += net_edge
+
+                            if side > 0:
+                                total_longs += 1
+                            else:
+                                total_shorts += 1
+                            total_trades += 1
+
+                            day_pnl_raw += net_edge_raw
+                            total_spread_cost_raw += spread_cost_raw
+                            if args.pnl_space == "raw":
+                                day_pnl += net_edge_raw
+                            else:
+                                day_pnl += np.arcsinh(net_edge_raw)
+
+                            if args.debug_trades_out:
+                                trade_rows.append({
+                                    "day": str(day),
+                                    "execution_mode": "phase3_flow",
+                                    "entry_ts": str(day),
+                                    "exit_ts": str(next_day_int),
+                                    "hold_seconds": float(24 * 3600),
+                                    "side": int(side),
+                                    "qty": float(qty),
+                                    "entry_cost_raw": 0.0,
+                                    "exit_cost_raw": 0.0,
+                                    "gross_raw": float(gross_edge_raw),
+                                    "net_raw": float(net_edge_raw),
+                                    "pred": float(np.nanmean(preds)) if len(preds) else 0.0,
+                                    "pred_raw": float(np.sinh(np.nanmean(preds))) if len(preds) else 0.0,
+                                    "pred_move_per_share": float(np.nanmean(np.sinh(preds) / np.maximum(vol_day, 1e-12))) if len(preds) else 0.0,
+                                    "gate": gate,
+                                    "burst_volume": float(np.nansum(vol_day[selected])) if np.any(selected) else 0.0,
+                                    "flow_signal": float(flow_signal),
+                                })
+
+            for pred in preds:
+                recent_predictions.append(pred)
+        else:
+            for i, pred in enumerate(preds):
+                current_ts = event_ts_day[i]
 
             # Close all due trades at current burst proxy prices (round-trip simulation mode).
             if args.execution_mode == "burst_stream":
@@ -641,7 +824,7 @@ def main():
                         "burst_vol": burst_vol_i,
                     })
                 
-            recent_predictions.append(pred)
+                recent_predictions.append(pred)
             
         daily_pnls.append(day_pnl)
         cum_pnl_raw_tracker += day_pnl_raw
@@ -668,6 +851,8 @@ def main():
                 trigger_info = f"Rolling Thresholds L>{current_long_thresh:.3f} S<{current_short_thresh:.3f}"
             elif args.signal_mode == "cost_aware":
                 trigger_info = f"CostAware buffer={args.cost_buffer_mult:.2f}"
+            elif args.execution_mode == "phase3_flow":
+                trigger_info = f"Phase3 theta={args.phase3_thresh:.3f} lag={args.phase3_min_lag_minutes:.1f}m"
             else:
                 trigger_info = "Direction sign gate"
             print(f"[{day_str}] Walk-Forward Day {day_idx}/{len(remaining_days)} "

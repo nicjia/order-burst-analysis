@@ -2065,3 +2065,63 @@ These are the right replacements for legacy raw "Net Perm" when evaluating execu
   - `NVDA`: strong positive result in both overnight targets (combined PnL `300,458,939.72`, mean Sharpe `1.375`).
   - `JPM` and `MS`: negative in both overnight targets for this run.
   - `TSLA`: zero triggered trades under selected cost-aware gates for both overnight targets.
+
+### 14.5 Direction-Only Diagnostic Batch (`12891525`, 2026-04-09)
+
+Purpose: isolate model directional content by removing gate suppression and notional scaling.
+
+Run controls:
+- `signal_mode=direction` (`pred > 0` long, `pred < 0` short)
+- `position_mode=shares`, `shares_per_trade=1`
+- spread-cost disabled (`spread_col=NO_SPREAD_COL`)
+
+#### 14.5.1 Execution Health
+- Job out files: 4
+- Completed markers: 4/4
+- Tracebacks: 0
+- NaN errors: 0
+- Shell line errors: 0
+
+#### 14.5.2 Consolidated Metrics (Direction-Only)
+| Ticker | Target | Signals Evaluated | Trades | Trade Rate | Cum PnL (raw) | Sharpe |
+|---|---|---:|---:|---:|---:|---:|
+| JPM | reg_clcl | 627,222 | 627,222 | 1.0000 | -30,167.70 | -1.30 |
+| JPM | reg_clop | 4,560 | 4,560 | 1.0000 | -1,217.79 | -1.60 |
+| MS | reg_clcl | 32,965 | 32,965 | 1.0000 | -3,267.65 | -2.97 |
+| MS | reg_clop | 25,097 | 25,097 | 1.0000 | -2,764.63 | -2.80 |
+| NVDA | reg_clcl | 15,602 | 15,602 | 1.0000 | -4,078.29 | -0.54 |
+| NVDA | reg_clop | 24,958 | 24,958 | 1.0000 | 1,356.64 | 0.07 |
+| TSLA | reg_clcl | 3,173 | 3,173 | 1.0000 | 234.60 | 0.32 |
+| TSLA | reg_clop | 1,513 | 1,513 | 1.0000 | -1,222.60 | -1.77 |
+
+Interpretation: once gate suppression is removed, TSLA does trade (so prior zero-trade behavior was gate-threshold driven, not missing data), but aggregate directional edge remains weak/negative for most ticker-target pairs.
+
+### 14.6 Why High AUC Can Still Lose Money (Current Diagnosis)
+
+1. Objective mismatch (AUC vs economic objective)
+- Optuna tuning optimized classification AUC (`cls_*`), while backtests here trade regression outputs (`reg_clop`, `reg_clcl`) with execution mechanics.
+- AUC measures ranking quality, not trade payoff asymmetry, not position sizing impact, and not Sharpe/PnL.
+
+2. Thresholding/gating effects can collapse opportunity set
+- In cost-aware mode (`12890943`), TSLA had non-zero evaluated bursts but zero trades because predicted per-share move scale was below gate thresholds.
+- JPM `reg_clop` similarly had very low pass-through (22 trades out of 4,560 evaluated bursts).
+
+3. Position sizing dominated earlier PnL magnitudes
+- Previous runs used `position_mode=fraction` with size proportional to burst volume.
+- This produced extreme notional sizes (e.g., very large NVDA `qty` tails), amplifying both gains and losses and making headline PnL unstable.
+
+4. Direction-only diagnostic shows limited standalone alpha
+- With `shares=1` and no spread costs (`12891525`), most ticker-target combinations remained negative Sharpe.
+- This indicates weak standalone directional predictability at current decision rule, even before adding realistic costs.
+
+5. Long-horizon timing policy must match information availability
+- Your phase definition for long-horizon alpha uses predicted informational bursts and then evaluates longer-horizon returns.
+- For long targets (`tCLOSE`, `CLOP`, `CLCL`), if filtering depends on summary burst statistics such as `D_b` / `PeakImpact`, decision timing should be delayed until those features are known and stable for that horizon design.
+- Current burst-stream implementation enters at burst event time; this is likely misaligned with the intended long-horizon protocol and can distort economic interpretation.
+
+### 14.7 Method Alignment Change Needed (Next Step)
+
+To align with the intended Phase-III long-horizon setup, implement and test:
+- A long-horizon entry lag policy (e.g., enforce minimum delay after burst completion before trade eligibility for `reg_close/reg_clop/reg_clcl`).
+- A predicted-informational-burst filter first, then aggregate signal construction (daily/interval) before execution, rather than immediate per-burst trading.
+- Report both classification quality (AUC) and economic quality (Sharpe, PnL/trade, turnover, pass-rate) under the same timing assumptions.
