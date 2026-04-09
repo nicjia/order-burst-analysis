@@ -1,14 +1,26 @@
 #!/bin/bash
 #$ -cwd
+#$ -S /bin/bash
+#$ -V
 #$ -j y
 #$ -o logs/overnight_bt_$JOB_ID_$TASK_ID.out
 #$ -l h_data=10G,h_rt=12:00:00
 #$ -pe shared 4
 
 set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
+
+echo "========================================"
+echo "Overnight Backtest Job"
+echo "  JOB_ID:      ${JOB_ID:-N/A}"
+echo "  SGE_TASK_ID: ${SGE_TASK_ID:-N/A}"
+echo "  Hostname:    $(hostname)"
+echo "  Date:        $(date)"
+echo "  PWD:         $(pwd)"
+echo "========================================"
 
 . /etc/profile
 . /u/local/Modules/default/init/bash
@@ -16,6 +28,9 @@ module load gcc/10.2.0
 module load python/3.9.6
 
 source "${ROOT}/.venv/bin/activate"
+
+echo "Python: $(which python3)"
+python3 --version
 
 mkdir -p logs results/overnight_backtests
 
@@ -45,12 +60,16 @@ else
   fi
 fi
 
+echo "Resolved ticker: ${TICKER}"
+
 printf -v DATA_PATH "${DEFAULT_DATA_TEMPLATE}" "${TICKER}"
 if [ ! -s "${DATA_PATH}" ]; then
   echo "ERROR: Missing input data '${DATA_PATH}'." >&2
   echo "Run prep first (Hoffman): qsub -t 1-4 -v TICKERS=\"NVDA TSLA JPM MS\",FORCE_REBUILD_BASELINE=1 prep_data.sh" >&2
   exit 1
 fi
+
+echo "Resolved data path: ${DATA_PATH}"
 
 parse_optuna_params() {
   local json_file="$1"
