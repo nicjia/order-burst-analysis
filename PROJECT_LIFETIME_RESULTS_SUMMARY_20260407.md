@@ -1942,3 +1942,83 @@ sweep,NVDA,long,s0p5_v50_d0p7_r0p1_k0p2,cls_clcl,0.5,50,,0.7,0.1,0.2,1445198,AUC
 ### 13.3 Interpretation of Spread Inclusion from Printed Logs
 - In quote-based burst-stream debug runs, printed explicit spread costs were often `0.0000`, meaning losses were dominated by directional edge quality rather than explicit modeled spread charges in those runs.
 - Therefore, after adding spread-aware framework, the decisive factor remained hit-rate/EV per trade under selected signal rules and horizon target.
+
+## 14. Direct Answers: Config Strings, Models, and Metrics (2026-04-08)
+
+### 14.1 The New Configuration Strings
+The current top physical-parameter configurations (from `results/optuna_physical/*/best_physical_params_*.json`) are fractional-volume (`vf`) and map to your requested `sf` style as follows:
+
+- Canonical format now: `s{silence}_sf{vol_frac}_d{dir_thresh}_r{vol_ratio}_k{kappa}`
+- Internal field name used in code/files is `vf` (volume fraction).
+
+Top AUC configurations currently observed:
+
+| Rank | Ticker | Target | AUC | Exact String |
+|---|---|---|---:|---|
+| 1 | NVDA | `cls_1m` | 0.6533 | `s2.0_sf0.0049157326743032685_d0.7096570261049338_r0.5673611393219141_k0.0` |
+| 2 | TSLA | `cls_1m` | 0.6464 | `s0.5_sf0.004982101226003821_d0.6781305353061478_r0.42618445776832053_k0.0` |
+| 3 | TSLA | `cls_3m` | 0.6436 | `s2.0_sf0.004305421645396051_d0.654607615387428_r0.511539003720897_k0.0` |
+| 4 | NVDA | `cls_3m` | 0.6288 | `s2.0_sf0.0049830984354126955_d0.6620045163766891_r0.5515813238244158_k0.0` |
+| 5 | MS | `cls_1m` | 0.6285 | `s2.0_sf0.0016515914669865662_d0.9496310321847444_r0.5776935087713172_k0.0` |
+| 6 | JPM | `cls_1m` | 0.6239 | `s2.0_sf0.000911990180310947_d0.929607686295797_r0.3865011086107934_k0.0` |
+
+Examples for long-horizon targets with nonzero `kappa` (same source):
+
+- NVDA `cls_clop`: `s0.5_sf0.0005791438631370755_d0.5006846785554202_r0.5351208424087406_k1.6622979927165715`
+- NVDA `cls_close`: `s0.5_sf0.0006830448323427173_d0.7158494882817108_r0.06887597272196404_k1.2762520750555515`
+
+### 14.2 The Models Evaluated
+Short answer: both paths exist, but they are serving different phases.
+
+- Regression benchmarking phase (`src_py/regression_eval.py`) is still evaluating:
+  - `HistGB_Restricted`
+  - `XGB_Restricted`
+  - `ElasticNet`
+  - `Ridge`
+  - (also `RandomForest_Shallow` in that script)
+- Trading/backtest phase (`src_py/online_sgd_backtest.py`) has shifted to `SGDRegressor` and is where `cost_aware` gating, Sharpe, and net PnL-per-trade are computed.
+
+### 14.3 Performance Metrics (Updated)
+
+#### 14.3.1 OoS R-squared (Regression Benchmarking File)
+From `results/multi_model_regression_summary.csv` (aggregated over available rows for these model families):
+
+| Model | Mean OoS R2 (all targets) | Max OoS R2 (all targets) |
+|---|---:|---:|
+| `HistGB_Restricted` | 0.0127 | 0.1082 |
+| `XGB_Restricted` | 0.0126 | 0.1063 |
+| `ElasticNet` | 0.0088 | 0.0842 |
+| `Ridge` | 0.0033 | 0.0838 |
+
+#### 14.3.2 Directional Accuracy / Win Rate Under Cost-Aware Gating
+- Cost-aware gating metrics are currently produced in the SGD backtest path, not in the multi-model regression benchmark.
+- Therefore:
+  - `HistGB/XGB/ElasticNet/Ridge`: no direct cost-aware win-rate output yet (N/A in current pipeline).
+  - `SGDRegressor` (cost-aware runs, NVDA logs):
+
+| Run | Trades | Cum PnL (raw) | Sharpe | Avg Net PnL/Trade (raw) |
+|---|---:|---:|---:|---:|
+| `run_15_reg_close_cost_aware_cb1.0.log` | 74 | 80.64 | 0.34 | 1.089730 |
+| `run_14_reg_close_cost_aware_cb0.5.log` | 88 | 79.10 | 0.30 | 0.898864 |
+| `run_11_reg_10m_cost_aware_cb0.5.log` | 1,023 | -79.20 | -0.26 | -0.077419 |
+| `run_12_reg_10m_cost_aware_cb1.0.log` | 648 | -136.50 | -0.50 | -0.210648 |
+| `run_9_reg_5m_cost_aware_cb1.0.log` | 1,738 | -301.92 | -1.07 | -0.173717 |
+| `run_8_reg_5m_cost_aware_cb0.5.log` | 2,552 | -524.42 | -1.55 | -0.205494 |
+| `run_5_reg_3m_cost_aware_cb0.5.log` | 3,336 | -564.65 | -1.76 | -0.169260 |
+| `run_6_reg_3m_cost_aware_cb1.0.log` | 2,377 | -466.64 | -1.78 | -0.196315 |
+| `run_3_reg_1m_cost_aware_cb1.0.log` | 3,960 | -724.03 | -2.85 | -0.182836 |
+| `run_2_reg_1m_cost_aware_cb0.5.log` | 5,316 | -906.46 | -3.06 | -0.170515 |
+
+Debug-run win rates that were explicitly printed:
+
+- `run_nvda_debug_20260407.12846931.log` (`reg_10m`, cost-aware): Long win rate `47.54%`, Short win rate `47.06%`.
+- `run_nvda_debug_regclose_20260407.12847805.log` (`reg_close`, cost-aware): Long win rate `59.52%`, Short win rate `45.83%`.
+
+#### 14.3.3 Profitability Metrics to Report Going Forward
+Recommended primary profitability metrics (and now reported above):
+
+- `Annualized Sharpe Ratio`
+- `Avg Net PnL per Trade (raw)`
+- `Cumulative Simulated PnL (raw)` as a secondary context metric
+
+These are the right replacements for legacy raw "Net Perm" when evaluating executable, gated trading behavior.

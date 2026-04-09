@@ -94,10 +94,10 @@ def main():
     # C++ outputs "2026-01-02", CRSP pivots use 20160104
     bursts['date_int'] = bursts['Date'].astype(str).str.replace('-', '').astype(int)
 
-    # ── Build next-trading-day map from CRSP calendar ────────
-    trading_days = sorted(close_px.index.tolist())
-    next_day_map = {trading_days[i]: trading_days[i + 1]
-                    for i in range(len(trading_days) - 1)}
+    # ── Build robust next-trading-day mapping from CRSP calendar ───────
+    # Use searchsorted so dates not exactly present in CRSP still map
+    # to the next available trading day (no brittle dict key lookup).
+    trading_days = np.array(sorted(pd.Index(close_px.index).astype(int).tolist()), dtype=np.int64)
 
     # ── tCLOSE: uses CloseMid from burst CSV (intraday) ─────
     bursts['Perm_tCLOSE'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CloseMid'] - bursts['StartPrice']).astype('float64'))
@@ -125,14 +125,63 @@ def main():
         bursts['D_b'] = np.nan
         print("WARNING: No Mid_1m/3m/5m/10m columns found – cannot compute D_b")
 
-    # ── CLOP & CLCL: Vectorized CRSP Matrix Lookup ────────────────────
-    # extremely fast pd.merge instead of row-by-row lookups
-    bursts['target_day'] = bursts['date_int'].map(next_day_map)
-    open_melted = open_px.reset_index().melt(id_vars='date', var_name='Ticker', value_name='CRSP_OP')
-    close_melted = close_px.reset_index().melt(id_vars='date', var_name='Ticker', value_name='CRSP_CL')
+    # ── CLOP & CLCL: robust CRSP lookup with ticker-aware forward fill ───
+    # 1) target_day = next CRSP trading day after burst day
+    # 2) for each ticker, take first available non-null print on/after target_day
+    #    (handles holidays / missing vendor prints for a specific day+ticker)
+    idx = np.searchsorted(trading_days, bursts['date_int'].to_numpy(dtype=np.int64), side='right')
+    target_day = np.full(len(bursts), np.nan, dtype=float)
+    valid_idx = idx < len(trading_days)
+    target_day[valid_idx] = trading_days[idx[valid_idx]]
+    bursts['target_day'] = target_day
 
-    bursts = pd.merge(bursts, open_melted, left_on=['target_day', 'Ticker'], right_on=['date', 'Ticker'], how='left')
-    bursts = pd.merge(bursts, close_melted, left_on=['target_day', 'Ticker'], right_on=['date', 'Ticker'], how='left')
+    bursts['CRSP_OP'] = np.nan
+    bursts['CRSP_CL'] = np.nan
+    bursts['CRSP_OP_day'] = np.nan
+    bursts['CRSP_CL_day'] = np.nan
+
+    # Ticker-wise forward lookup: for each burst target_day, find the first
+    # non-null CRSP print on/after that day for the same ticker.
+    ticker_arr = bursts['Ticker'].astype(str).to_numpy()
+    target_arr = bursts['target_day'].to_numpy()
+
+    unique_tickers = pd.unique(ticker_arr)
+    for tkr in unique_tickers:
+        row_mask = ticker_arr == tkr
+        if not np.any(row_mask):
+            continue
+
+        # OPEN lookup
+        if tkr in open_px.columns:
+            s_op = open_px[tkr].dropna()
+            if not s_op.empty:
+                op_days = pd.Index(s_op.index).astype(int).to_numpy(dtype=np.int64)
+                op_vals = s_op.to_numpy(dtype=float)
+                m = row_mask & ~np.isnan(target_arr)
+                if np.any(m):
+                    td = target_arr[m].astype(np.int64)
+                    ii = np.searchsorted(op_days, td, side='left')
+                    ok = ii < len(op_days)
+                    if np.any(ok):
+                        ridx = np.where(m)[0][ok]
+                        bursts.loc[ridx, 'CRSP_OP'] = op_vals[ii[ok]]
+                        bursts.loc[ridx, 'CRSP_OP_day'] = op_days[ii[ok]]
+
+        # CLOSE lookup
+        if tkr in close_px.columns:
+            s_cl = close_px[tkr].dropna()
+            if not s_cl.empty:
+                cl_days = pd.Index(s_cl.index).astype(int).to_numpy(dtype=np.int64)
+                cl_vals = s_cl.to_numpy(dtype=float)
+                m = row_mask & ~np.isnan(target_arr)
+                if np.any(m):
+                    td = target_arr[m].astype(np.int64)
+                    ii = np.searchsorted(cl_days, td, side='left')
+                    ok = ii < len(cl_days)
+                    if np.any(ok):
+                        ridx = np.where(m)[0][ok]
+                        bursts.loc[ridx, 'CRSP_CL'] = cl_vals[ii[ok]]
+                        bursts.loc[ridx, 'CRSP_CL_day'] = cl_days[ii[ok]]
 
     # CLOP: x = open price of next trading day
     bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - bursts['StartPrice']).astype('float64'))
@@ -140,8 +189,26 @@ def main():
     # CLCL: x = close price of next trading day
     bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - bursts['StartPrice']).astype('float64'))
 
+    # Coverage diagnostics for overnight horizons
+    clop_valid = bursts['Perm_CLOP'].notna().sum()
+    clcl_valid = bursts['Perm_CLCL'].notna().sum()
+    total_rows = len(bursts)
+    op_forward_filled = ((bursts['CRSP_OP_day'].notna()) & (bursts['CRSP_OP_day'] > bursts['target_day'])).sum()
+    cl_forward_filled = ((bursts['CRSP_CL_day'].notna()) & (bursts['CRSP_CL_day'] > bursts['target_day'])).sum()
+    print(
+        f"Overnight coverage: CLOP {clop_valid}/{total_rows} ({100*clop_valid/max(total_rows,1):.1f}%), "
+        f"CLCL {clcl_valid}/{total_rows} ({100*clcl_valid/max(total_rows,1):.1f}%)"
+    )
+    print(
+        f"Forward-asof fallback usage: CRSP_OP={int(op_forward_filled)} rows, "
+        f"CRSP_CL={int(cl_forward_filled)} rows"
+    )
+
     # ── Clean up helper columns ───────────────────────────────
-    drop_cols = ['date_int', 'target_day', 'date_x', 'date_y', 'CRSP_OP', 'CRSP_CL'] + [c for c in bursts.columns if c.startswith('Disp_')]
+    drop_cols = [
+        'date_int', 'target_day', 'CRSP_OP', 'CRSP_CL',
+        'CRSP_OP_day', 'CRSP_CL_day'
+    ] + [c for c in bursts.columns if c.startswith('Disp_')]
     bursts.drop(columns=[c for c in drop_cols if c in bursts.columns], inplace=True)
 
     # ── Duration column (seconds) ────────────────────────────
