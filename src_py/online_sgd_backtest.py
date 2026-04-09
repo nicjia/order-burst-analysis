@@ -273,6 +273,18 @@ def main():
     y = y if isinstance(y, np.ndarray) else y.values
     X = X.values
 
+    # Hard guard against residual NaN/Inf in targets/features (can happen for
+    # overnight targets on sparse/missing daily print sequences).
+    finite_y = np.isfinite(y)
+    finite_X = np.all(np.isfinite(X), axis=1)
+    finite_mask = finite_y & finite_X
+    dropped_rows = int((~finite_mask).sum())
+    if dropped_rows > 0:
+        print(f"Dropping {dropped_rows:,} bursts with non-finite feature/target values before simulation.")
+        filtered = filtered.loc[finite_mask].copy()
+        y = y[finite_mask]
+        X = X[finite_mask]
+
     # Build per-burst event timestamps for stream execution.
     time_col = "EndTime" if "EndTime" in filtered.columns else "StartTime"
     if time_col in filtered.columns:
@@ -385,6 +397,11 @@ def main():
         X_day = X[day_mask]
         y_day = y[day_mask] # True Permanence (arcsinh real value structure log-returns)
         day_df = filtered.loc[day_mask]
+
+        # Secondary per-day guard used only for nightly model updates.
+        day_finite = np.isfinite(y_day) & np.all(np.isfinite(X_day), axis=1)
+        X_day_fit = X_day[day_finite]
+        y_day_fit = y_day[day_finite]
         vol_day = day_df['BurstVolume'].to_numpy(dtype=float)
         day_idx_arr = np.flatnonzero(day_mask)
         event_ts_day = event_ts_np[day_idx_arr]
@@ -622,12 +639,13 @@ def main():
         cum_pnl_tracker += day_pnl
         
         # 5. AT CLOSE: Execute Nightly Model Adaptation (Regime update)
-        if args.adaptive_scaler:
-            scaler.partial_fit(X_day)
-            X_day_for_fit = scaler.transform(X_day)
-        else:
-            X_day_for_fit = X_day_s
-        model.partial_fit(X_day_for_fit, y_day)
+        if len(X_day_fit) > 0:
+            if args.adaptive_scaler:
+                scaler.partial_fit(X_day_fit)
+                X_day_for_fit = scaler.transform(X_day_fit)
+            else:
+                X_day_for_fit = scaler.transform(X_day_fit)
+            model.partial_fit(X_day_for_fit, y_day_fit)
 
         # Progress timeline every ~1 month (20 trading days)
         if day_idx % 20 == 0:
