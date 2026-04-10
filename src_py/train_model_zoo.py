@@ -67,8 +67,8 @@ Usage:
   python src_py/train_model_zoo.py results/bursts_NVDA_filtered.csv \\
       --model lgb_tuned --target cls_close --outdir results/zoo/
 
-  # Hoffman2 (SLURM array — each model is a separate job):
-  sbatch hoffman2_model_zoo.sh results/bursts_NVDA_filtered.csv
+    # Hoffman2 (SGE array):
+    qsub run_model_zoo_two_phase_h2.sh
 """
 
 import pandas as pd

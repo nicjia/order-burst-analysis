@@ -209,18 +209,24 @@ def main():
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--target", default="cls_10m")
     parser.add_argument("--trials", type=int, default=100)
+    parser.add_argument("--start-date", default="2023-01-01")
+    parser.add_argument("--end-date", default="2024-12-31")
     args = parser.parse_args()
     
     print(f"========== OPTUNA PHYSICAL SWEEP ==========")
     print(f"Ticker: {args.ticker}")
     print(f"Target: {args.target}")
     print(f"Trials: {args.trials}")
+    print(f"Date window: {args.start_date} -> {args.end_date}")
     print(f"===========================================\n")
+
+    start_ts = pd.to_datetime(args.start_date)
+    end_ts = pd.to_datetime(args.end_date)
     
     # Preload from the cluster's silence_sweep_{ticker} caches
     tags = ["s0p5", "s1p0", "s2p0"]
     for tag in tags:
-        # Expected path derived from eval_optuna_direct.sh / sweep.sh
+        # Expected path derived from run_sweep_*_h2.sh outputs.
         path = f"results/silence_sweep_{args.ticker}/logreg_l2/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
         
         if not os.path.exists(path):
@@ -231,6 +237,13 @@ def main():
         df = pd.read_csv(path)
         
         df['DateCol'] = pd.to_datetime(df['Date'])
+        df = df[(df['DateCol'] >= start_ts) & (df['DateCol'] <= end_ts)].copy()
+        if df.empty:
+            print(
+                f"ERROR: No rows left after date filter for {tag} "
+                f"in [{args.start_date}, {args.end_date}]"
+            )
+            sys.exit(1)
         df['Month'] = df['DateCol'].dt.strftime('%Y-%m')
         
         df_cache[tag] = df

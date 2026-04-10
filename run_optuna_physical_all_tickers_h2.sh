@@ -18,10 +18,13 @@ set -Eeo pipefail
 TICKERS=(NVDA TSLA JPM MS)
 TARGETS=("cls_1m" "cls_3m" "cls_5m" "cls_10m" "cls_close" "cls_clop" "cls_clcl")
 TRIALS=100
+START_DATE=${START_DATE:-2023-01-01}
+END_DATE=${END_DATE:-2024-12-31}
 
 echo "========== OPTUNA PHYSICAL PARAMETER SEARCH =========="
 echo "Targets: ${TARGETS[*]}"
 echo "Trials: ${TRIALS}"
+echo "Date window: ${START_DATE} -> ${END_DATE}"
 echo "======================================================"
 
 if [ -n "${SGE_TASK_ID:-}" ]; then
@@ -43,7 +46,9 @@ for TARGET in "${TARGETS[@]}"; do
     python3 src_py/optuna_physical_sweep.py \
         --ticker "${TICKER}" \
         --target "${TARGET}" \
-        --trials "${TRIALS}"
+        --trials "${TRIALS}" \
+        --start-date "${START_DATE}" \
+        --end-date "${END_DATE}"
 done
 
 echo "Completed: ${TICKER} at $(date)"

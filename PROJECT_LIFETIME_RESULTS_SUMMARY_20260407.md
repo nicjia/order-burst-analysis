@@ -2125,3 +2125,85 @@ To align with the intended Phase-III long-horizon setup, implement and test:
 - A long-horizon entry lag policy (e.g., enforce minimum delay after burst completion before trade eligibility for `reg_close/reg_clop/reg_clcl`).
 - A predicted-informational-burst filter first, then aggregate signal construction (daily/interval) before execution, rather than immediate per-burst trading.
 - Report both classification quality (AUC) and economic quality (Sharpe, PnL/trade, turnover, pass-rate) under the same timing assumptions.
+
+### 14.8 Phase III Formalization (Implemented Strategy)
+
+This section now follows your intended Phase-III structure for long-horizon alpha forecasting.
+
+For horizon `x`, define informational-burst indicator:
+
+`I_b(x) = 1{ predicted_permanence(b; x) > theta }`
+
+Then construct daily informational order-flow signal:
+
+`S_{i,t}(x) = sum_{b in B_i(t)} I_b(x) * Q_b`
+
+where `Q_b` is the burst flow component (`signed_volume` in the current run), and `B_i(t)` are bursts for instrument `i` on day `t`.
+
+Execution mapping used for this implementation:
+- For `reg_clcl` in `phase3_flow` mode:
+  - build `S_{i,t}` from day-`t` predicted informational bursts
+  - direction signal: long if `S_{i,t} > 0`, short if `S_{i,t} < 0`
+  - enter at `close(t)`, exit at `close(t+1)`
+- A minimum lag constraint is enforced before a burst can contribute to `S_{i,t}` (`phase3_min_lag_minutes`, currently `10m`) to respect information timing.
+- This avoids same-timestamp look-ahead because only ex-ante predictions and same-day burst attributes are used to form `S_{i,t}`.
+
+### 14.9 New Batch Results (`12892692` and `12892702`)
+
+#### 14.9.1 Phase-III CLCL Flow (`12892692`)
+Configuration:
+- `execution_mode=phase3_flow`
+- `signal_mode=direction`
+- `position_mode=shares`, `shares_per_trade=1`
+- `phase3_thresh=0.0`, `phase3_min_lag_minutes=10.0`
+- `phase3_flow_col=signed_volume`
+
+Health:
+- Completed markers: 4/4
+- Tracebacks: 0
+- NaN errors: 0
+- Shell line errors: 0
+
+Results:
+
+| Ticker | Target | Signals Evaluated | Trades | Trade Rate | Cum PnL (raw) | Sharpe |
+|---|---|---:|---:|---:|---:|---:|
+| NVDA | reg_clcl | 471 | 464 | 0.9851 | -1,414.05 | -0.91 |
+| TSLA | reg_clcl | 456 | 339 | 0.7434 | 10.49 | 0.05 |
+| JPM | reg_clcl | 471 | 471 | 1.0000 | 101.83 | 1.33 |
+| MS | reg_clcl | 471 | 469 | 0.9958 | 0.39 | 0.01 |
+
+Aggregate observation: mixed cross-sectional performance; positive for JPM, near-flat for MS/TSLA, negative for NVDA in this specific run.
+
+#### 14.9.2 1-Min Immediate Burst Trading (`12892702`)
+Configuration:
+- `execution_mode=burst_stream`
+- `target=reg_1m`
+- `signal_mode=direction`
+- `position_mode=shares`, `shares_per_trade=1`
+- spread-cost disabled
+
+Health:
+- Completed markers: 4/4
+- Tracebacks: 0
+- NaN errors: 0
+- Shell line errors: 0
+
+Results:
+
+| Ticker | Target | Signals Evaluated | Trades | Trade Rate | Cum PnL (raw) | Sharpe |
+|---|---|---:|---:|---:|---:|---:|
+| NVDA | reg_1m | 468 | 468 | 1.0000 | -172.68 | -0.11 |
+| TSLA | reg_1m | 469 | 469 | 1.0000 | -195.69 | -0.74 |
+| JPM | reg_1m | 473 | 473 | 1.0000 | 75.90 | 0.98 |
+| MS | reg_1m | 473 | 473 | 1.0000 | 23.12 | 0.49 |
+
+Aggregate observation: 1-minute immediate direction signal is positive for JPM/MS and negative for NVDA/TSLA in this batch.
+
+#### 14.9.3 Artifact Paths
+- Phase-III CLCL pull root: `hoffman_pull_20260409_phase3clcl/`
+  - summary: `hoffman_pull_20260409_phase3clcl/analysis/phase3_clcl_12892692_summary.md`
+  - metrics: `hoffman_pull_20260409_phase3clcl/analysis/phase3_clcl_12892692_metrics.csv`
+- 1m burst pull root: `hoffman_pull_20260409_burst1m/`
+  - summary: `hoffman_pull_20260409_burst1m/analysis/burst_1m_12892702_summary.md`
+  - metrics: `hoffman_pull_20260409_burst1m/analysis/burst_1m_12892702_metrics.csv`

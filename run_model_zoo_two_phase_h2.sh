@@ -1,6 +1,6 @@
 #!/bin/bash
 #===================================================================
-# hoffman2_model_zoo.sh — SGE Job Array: Two-Phase Model Zoo
+# run_model_zoo_two_phase_h2.sh — SGE Job Array: Two-Phase Model Zoo
 #
 # Phase 1 (Tasks 1-84):  SHORT horizons on UNFILTERED data
 #   → cls_1m, cls_3m, cls_5m, cls_10m  (D_b features auto-dropped)
@@ -9,7 +9,7 @@
 #   → cls_close, cls_clop, cls_clcl
 #
 # Usage:
-#   qsub hoffman2_model_zoo.sh
+#   qsub run_model_zoo_two_phase_h2.sh
 #===================================================================
 
 #$ -cwd

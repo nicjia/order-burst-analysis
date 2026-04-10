@@ -40,10 +40,7 @@ def build_target(df, target_key):
         raise ValueError(f"Target column '{col}' not in data.")
     vals = df[col].values.copy()
     if task == 'regression':
-        lo = np.nanpercentile(vals, 1)
-        hi = np.nanpercentile(vals, 99)
-        y = np.clip(vals, lo, hi)
-        return y, 'regression', {'lo': lo, 'hi': hi}
+        return vals, 'regression', {}
     else:
         raise ValueError(
             "SGD backtester currently supports regression targets only: "
@@ -138,6 +135,10 @@ def main():
     parser = argparse.ArgumentParser(description="Online SGD PnL Backtester")
     parser.add_argument("--data", required=True, help="Path to raw, unfiltered bursts CSV (e.g., nvda_raw_bursts.csv)")
     parser.add_argument("--target", default="reg_10m", help="Target key (e.g., reg_10m or reg_close)")
+    parser.add_argument("--start-date", default="2023-01-01",
+                        help="Inclusive start date for burst rows (YYYY-MM-DD)")
+    parser.add_argument("--end-date", default="2024-12-31",
+                        help="Inclusive end date for burst rows (YYYY-MM-DD)")
     
     # Grand Universal Filters
     parser.add_argument("--silence-tag", default="s2p0")
@@ -204,6 +205,7 @@ def main():
     print(f"Patch:   {PATCH_VERSION}")
     print(f"Data:    {args.data}")
     print(f"Target:  {args.target}")
+    print(f"Dates:   {args.start_date} -> {args.end_date}")
     print(f"Filters: {args.silence_tag}, vf={args.vol_frac}, d={args.dir_thresh}, r={args.vol_ratio}\n")
 
     # 1. LOAD DATA 
@@ -215,6 +217,12 @@ def main():
     df = pd.read_csv(args.data)
     
     df['DateCol'] = pd.to_datetime(df['Date'].astype(str))
+    start_ts = pd.to_datetime(args.start_date)
+    end_ts = pd.to_datetime(args.end_date)
+    df = df[(df['DateCol'] >= start_ts) & (df['DateCol'] <= end_ts)].copy()
+    if df.empty:
+        print("ERROR: No rows left after applying date filter window.")
+        sys.exit(1)
     
     # Compute the dynamic 14-day trailing ADV so we can filter correctly based on fraction
     print("Computing 14-day trailing cross-asset ADV...")
@@ -697,10 +705,12 @@ def main():
                     + args.spread_exit_multiplier * spread_exit_val
                 )
                 gate = args.cost_buffer_mult * per_share_cost
+                dir_i = float(day_df['Direction'].to_numpy()[i])
+
                 if pred_move_per_share > gate:
-                    side = 1
+                    side = dir_i       # Trade WITH the informational burst
                 elif pred_move_per_share < -gate:
-                    side = -1
+                    side = -dir_i      # Trade AGAINST a mean-reverting burst
             else:
                 # Direction-only trigger: trade purely on predicted sign.
                 if pred > 0:

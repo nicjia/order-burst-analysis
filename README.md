@@ -80,7 +80,9 @@ To simulate a trading strategy without temporal leakage, the script establishes 
 - **pivot_returns.py:** Aggregates raw CRSP files into fast-lookup pivot tables for overnight target variables.
 
 ### Bash Execution Wrappers (`.sh`)
-- **sweep.sh:** Standard absolute-volume tracking brute-force array grid job.
-- **sweep_frac.sh:** Fractional variation of array grid applying parameters dynamically as a percentage of a stock's trailing 14-day Average Daily Volume.
-- **eval_optuna_physical.sh:** Array grid harnessing the fast `optuna_physical_sweep.py` Bayesian engine memory structures for optimizing dataset definitions.
-- **eval_optuna_direct.sh:** Uses Optuna specifically for parameterizing the ML hyperparameters (e.g. LightGBM node depth) across the globally consistent `s2p0` locked baseline.
+- **run_sweep_static_volume_h2.sh:** Standard absolute-volume sweep across all tickers.
+- **run_sweep_fractional_adv_h2.sh:** Fractional-ADV sweep across all tickers.
+- **run_optuna_physical_all_tickers_h2.sh:** Optuna physical parameter search for 7 targets x 4 tickers (default 2023-2024 window).
+- **run_model_zoo_two_phase_h2.sh:** Two-phase model-zoo array (short/long horizon).
+- **run_sgd_backtest_optuna_all_tickers_2023_2024_h2.sh:** Backtest selected target on all 4 tickers using Optuna physical params.
+- **run_sgd_backtest_optuna_nvda_archive_2019_2022_h2.sh:** NVDA archive backtest runner (auto-builds archive permanence dataset if missing).
