@@ -691,13 +691,15 @@ def main():
 
             side = 0
             gate = np.nan
+            dir_i = float(day_df['Direction'].to_numpy()[i])  # Pull direction here for ALL modes
+
             if args.signal_mode == "percentile":
                 if pred > current_long_thresh:
-                    side = 1
+                    side = dir_i
                 elif pred < current_short_thresh:
-                    side = -1
+                    side = -dir_i
             elif args.signal_mode == "cost_aware":
-                # Cost-aware trigger: use predicted per-share move and require it to clear estimated round-trip spread costs.
+                # Cost-aware trigger: use predicted per-share move...
                 spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
                 spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
                 per_share_cost = (
@@ -705,7 +707,6 @@ def main():
                     + args.spread_exit_multiplier * spread_exit_val
                 )
                 gate = args.cost_buffer_mult * per_share_cost
-                dir_i = float(day_df['Direction'].to_numpy()[i])
 
                 if pred_move_per_share > gate:
                     side = dir_i       # Trade WITH the informational burst
@@ -714,9 +715,9 @@ def main():
             else:
                 # Direction-only trigger: trade purely on predicted sign.
                 if pred > 0:
-                    side = 1
+                    side = dir_i
                 elif pred < 0:
-                    side = -1
+                    side = -dir_i
 
             if side == 1:
                 signal_pass_long += 1
