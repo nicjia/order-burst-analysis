@@ -7,8 +7,6 @@
 #$ -l h_data=10G,h_rt=08:00:00
 #$ -pe shared 4
 
-set -Eeo pipefail
-trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
@@ -18,6 +16,9 @@ cd "${ROOT}"
 module load gcc/10.2.0
 module load python/3.9.6
 source "${ROOT}/.venv/bin/activate"
+
+set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 mkdir -p logs results/sgd_backtests_optuna_2023_2024
 

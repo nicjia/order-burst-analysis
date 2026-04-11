@@ -197,20 +197,18 @@ def engineer_features(df):
 # TARGET CONSTRUCTION
 # ═════════════════════════════════════════════════════════════
 
-def build_targets(df, winsor_pct=1):
+def build_targets(df, winsor_pct=None):
     """
     Classification target:  y_cls = 1 if Perm_tCLOSE > 0  (burst persisted)
-    Regression target:      y_reg = Perm_tCLOSE winsorized to [p1, p99]
+    Regression target:      y_reg = raw Perm_tCLOSE (NO WINSORIZING, preserve arcsinh fat tails)
     """
     df = df.copy()
 
     # Classification: did the burst impact persist to close?
     df['y_cls'] = (df['Perm_tCLOSE'] > 0).astype(int)
 
-    # Regression: winsorize extreme φ values
-    lo = df['Perm_tCLOSE'].quantile(winsor_pct / 100)
-    hi = df['Perm_tCLOSE'].quantile(1 - winsor_pct / 100)
-    df['y_reg'] = df['Perm_tCLOSE'].clip(lower=lo, upper=hi)
+    # Regression: Pass the raw arcsinh target straight through
+    df['y_reg'] = df['Perm_tCLOSE']
 
     return df
 
