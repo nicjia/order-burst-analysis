@@ -741,13 +741,6 @@ def main():
                     })
 
                 if side != 0:
-                    if side > 0:
-                        total_longs += 1
-                    else:
-                        total_shorts += 1
-                    total_trades += 1
-
-                if side != 0:
                     if args.execution_mode == "label_proxy":
                         # permanence label encodes approx. burst_volume * price_move; convert to per-share move.
                         gross_edge_raw = np.sinh(y_day[i])
@@ -801,6 +794,11 @@ def main():
 
                         day_pnl_raw += net_edge_raw
                         total_spread_cost_raw += spread_cost_raw
+                        if side > 0:
+                            total_longs += 1
+                        else:
+                            total_shorts += 1
+                        total_trades += 1
                         if args.pnl_space == "raw":
                             day_pnl += net_edge_raw
                         else:
@@ -834,6 +832,12 @@ def main():
                             "gate": gate,
                             "burst_vol": burst_vol_i,
                         })
+
+                        if side > 0:
+                            total_longs += 1
+                        else:
+                            total_shorts += 1
+                        total_trades += 1
 
                 recent_predictions.append(pred)
             
