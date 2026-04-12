@@ -92,14 +92,75 @@ PY
 }
 
 build_archive_dataset_if_missing() {
-  # This will instantly return true now that ARCHIVE_PERM_CSV points to your real file!
-  if [ -s "${ARCHIVE_PERM_CSV}" ]; then
-    echo "Using existing archive permanence CSV: ${ARCHIVE_PERM_CSV}"
-    return 0
+  if [ ! -s "${ARCHIVE_PERM_CSV}" ]; then
+    echo "ERROR: Cannot find ${ARCHIVE_PERM_CSV}. Please ensure it is in the results/ folder." >&2
+    return 1
   fi
-  
-  echo "ERROR: Cannot find ${ARCHIVE_PERM_CSV}. Please ensure it is in the results/ folder." >&2
-  return 1
+
+  echo "Validating archive permanence CSV: ${ARCHIVE_PERM_CSV}"
+  if ! python3 - "${ARCHIVE_PERM_CSV}" "${TICKER}" <<'PY'
+import csv
+import math
+import sys
+
+path = sys.argv[1]
+expected_ticker = sys.argv[2]
+
+rows = 0
+bad_ticker = 0
+finite_clop = 0
+finite_clcl = 0
+
+with open(path, newline='') as f:
+    r = csv.DictReader(f)
+    required = {'Ticker', 'Perm_CLOP', 'Perm_CLCL'}
+    missing = [c for c in required if c not in (r.fieldnames or [])]
+    if missing:
+        print(f"ERROR: Missing required columns: {missing}")
+        sys.exit(2)
+
+    for row in r:
+        rows += 1
+        if row.get('Ticker', '') != expected_ticker:
+            bad_ticker += 1
+
+        for key, acc in (('Perm_CLOP', 'clop'), ('Perm_CLCL', 'clcl')):
+            v = (row.get(key) or '').strip()
+            if not v:
+                continue
+            try:
+                fv = float(v)
+            except Exception:
+                continue
+            if math.isfinite(fv):
+                if acc == 'clop':
+                    finite_clop += 1
+                else:
+                    finite_clcl += 1
+
+if rows == 0:
+    print("ERROR: Archive CSV has zero rows.")
+    sys.exit(3)
+
+print(f"rows={rows} bad_ticker_rows={bad_ticker} finite_clop={finite_clop} finite_clcl={finite_clcl}")
+
+if bad_ticker > 0:
+    print("ERROR: Ticker column does not match expected ticker; this usually means data_processor extracted folder name instead of stock symbol.")
+    sys.exit(4)
+
+if finite_clop == 0 and finite_clcl == 0:
+    print("ERROR: Overnight permanence targets are all non-finite/empty.")
+    sys.exit(5)
+PY
+  then
+    echo "ERROR: Archive permanence CSV failed validation." >&2
+    echo "Recompute it with forced ticker to avoid archive-folder ticker bug:" >&2
+    echo "  python3 src_py/compute_permanence.py ${ARCHIVE_PERM_CSV%_filtered.csv}.csv open_all.csv close_all.csv --kappa 0 --ticker ${TICKER}" >&2
+    return 1
+  fi
+
+  echo "Archive CSV validation passed."
+  return 0
 }
 
 main() {
