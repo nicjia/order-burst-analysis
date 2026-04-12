@@ -629,212 +629,212 @@ def main():
             for i, pred in enumerate(preds):
                 current_ts = event_ts_day[i]
 
-            # Close all due trades at current burst proxy prices (round-trip simulation mode).
-            if args.execution_mode == "burst_stream":
-                while open_trades and current_ts >= open_trades[0]["due_ts"]:
-                    tr = open_trades.popleft()
-                    if stream_quote_mode:
-                        exit_px = float(exit_bid_day[i]) if tr["side"] > 0 else float(exit_ask_day[i])
-                        gross_edge_raw = tr["side"] * tr["qty"] * (exit_px - tr["entry_px"])
-                        exit_cost_raw = 0.0
-                        net_edge_raw = gross_edge_raw
-                    else:
-                        exit_mid = float(mid_day[i])
-                        exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
-                        exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
-                        gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
-                        gross_edge_raw = gross_mid_move_raw
-                        net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
-                    gross_edge = gross_edge_raw if args.pnl_space == "raw" else np.arcsinh(gross_edge_raw)
-                    cost_edge = (tr["entry_cost_raw"] + exit_cost_raw) if args.pnl_space == "raw" else np.arcsinh(tr["entry_cost_raw"] + exit_cost_raw)
-                    net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+                # Close all due trades at current burst proxy prices (round-trip simulation mode).
+                if args.execution_mode == "burst_stream":
+                    while open_trades and current_ts >= open_trades[0]["due_ts"]:
+                        tr = open_trades.popleft()
+                        if stream_quote_mode:
+                            exit_px = float(exit_bid_day[i]) if tr["side"] > 0 else float(exit_ask_day[i])
+                            gross_edge_raw = tr["side"] * tr["qty"] * (exit_px - tr["entry_px"])
+                            exit_cost_raw = 0.0
+                            net_edge_raw = gross_edge_raw
+                        else:
+                            exit_mid = float(mid_day[i])
+                            exit_spread_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
+                            exit_cost_raw = tr["qty"] * args.spread_exit_multiplier * exit_spread_val
+                            gross_mid_move_raw = tr["side"] * tr["qty"] * (exit_mid - tr["entry_mid"])
+                            gross_edge_raw = gross_mid_move_raw
+                            net_edge_raw = gross_mid_move_raw - tr["entry_cost_raw"] - exit_cost_raw
+                        gross_edge = gross_edge_raw if args.pnl_space == "raw" else np.arcsinh(gross_edge_raw)
+                        cost_edge = (tr["entry_cost_raw"] + exit_cost_raw) if args.pnl_space == "raw" else np.arcsinh(tr["entry_cost_raw"] + exit_cost_raw)
+                        net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
 
-                    side_stats[tr["side"]]["trades"] += 1
-                    side_stats[tr["side"]]["wins"] += int(net_edge_raw > 0)
-                    side_stats[tr["side"]]["gross"] += gross_edge
-                    side_stats[tr["side"]]["cost"] += cost_edge
-                    side_stats[tr["side"]]["net"] += net_edge
+                        side_stats[tr["side"]]["trades"] += 1
+                        side_stats[tr["side"]]["wins"] += int(net_edge_raw > 0)
+                        side_stats[tr["side"]]["gross"] += gross_edge
+                        side_stats[tr["side"]]["cost"] += cost_edge
+                        side_stats[tr["side"]]["net"] += net_edge
 
-                    if args.debug_trades_out:
-                        hold_seconds = (current_ts - tr["entry_ts"]) / np.timedelta64(1, "s")
-                        trade_rows.append({
-                            "day": str(day),
-                            "execution_mode": "burst_stream",
-                            "entry_ts": str(tr["entry_ts"]),
-                            "exit_ts": str(current_ts),
-                            "hold_seconds": float(hold_seconds),
-                            "side": int(tr["side"]),
-                            "qty": float(tr["qty"]),
-                            "entry_cost_raw": float(tr["entry_cost_raw"]),
-                            "exit_cost_raw": float(exit_cost_raw),
-                            "gross_raw": float(gross_edge_raw),
-                            "net_raw": float(net_edge_raw),
-                            "pred": float(tr["pred"]),
-                            "pred_raw": float(np.sinh(tr["pred"])),
-                            "pred_move_per_share": float(np.sinh(tr["pred"]) / max(float(tr["burst_vol"]), 1e-12)),
-                            "gate": "" if np.isnan(tr["gate"]) else float(tr["gate"]),
-                            "burst_volume": float(tr["burst_vol"]),
-                        })
-                    day_pnl_raw += net_edge_raw
-                    total_exit_spread_cost_raw += exit_cost_raw
-                    total_spread_cost_raw += exit_cost_raw
-                    if args.pnl_space == "raw":
-                        day_pnl += net_edge_raw
-                    else:
-                        day_pnl += np.arcsinh(net_edge_raw)
-
-            burst_vol_i = float(vol_day[i])
-            qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
-            pred_raw = np.sinh(pred)
-            pred_move_per_share = pred_raw / max(burst_vol_i, 1e-12)
-            signal_evals += 1
-
-            side = 0
-            gate = np.nan
-            dir_i = float(day_df['Direction'].to_numpy()[i])  # Pull direction here for ALL modes
-
-            if args.signal_mode == "percentile":
-                if pred > current_long_thresh:
-                    side = dir_i
-                elif pred < current_short_thresh:
-                    side = -dir_i
-            elif args.signal_mode == "cost_aware":
-                # Cost-aware trigger: use predicted per-share move...
-                spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
-                spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
-                per_share_cost = (
-                    args.spread_multiplier * spread_entry_val
-                    + args.spread_exit_multiplier * spread_exit_val
-                )
-                gate = args.cost_buffer_mult * per_share_cost
-
-                if pred_move_per_share > gate:
-                    side = dir_i       # Trade WITH the informational burst
-                elif pred_move_per_share < -gate:
-                    side = -dir_i      # Trade AGAINST a mean-reverting burst
-            else:
-                # Direction-only trigger: trade purely on predicted sign.
-                if pred > 0:
-                    side = dir_i
-                elif pred < 0:
-                    side = -dir_i
-
-            if side == 1:
-                signal_pass_long += 1
-            elif side == -1:
-                signal_pass_short += 1
-            else:
-                signal_reject += 1
-
-            if args.debug_signals_out:
-                signal_rows.append({
-                    "day": str(day),
-                    "ts": str(current_ts),
-                    "target": args.target,
-                    "pred": float(pred),
-                    "pred_raw": float(pred_raw),
-                    "pred_move_per_share": float(pred_move_per_share),
-                    "gate": "" if np.isnan(gate) else float(gate),
-                    "signal_side": int(side),
-                    "burst_volume": float(burst_vol_i),
-                    "qty": float(qty),
-                })
-
-            if side != 0:
-                if side > 0:
-                    total_longs += 1
-                else:
-                    total_shorts += 1
-                total_trades += 1
-
-            if side != 0:
-                if args.execution_mode == "label_proxy":
-                    # permanence label encodes approx. burst_volume * price_move; convert to per-share move.
-                    gross_edge_raw = np.sinh(y_day[i])
-                    edge_per_share = gross_edge_raw / max(burst_vol_i, 1e-12)
-                    signed_edge_raw = side * qty * edge_per_share
-
-                    spread_cost_raw = 0.0
-                    if use_spread_cost:
-                        spread_entry_val = max(0.0, float(spread_entry_day[i]))
-                        spread_exit_val = max(0.0, float(spread_exit_day[i]))
-                        entry_cost_raw = (
-                            args.spread_multiplier * qty * spread_entry_val
-                        )
-                        exit_cost_raw = (
-                            args.spread_exit_multiplier * qty * spread_exit_val
-                        )
-                        spread_cost_raw = entry_cost_raw + exit_cost_raw
-                        total_entry_spread_cost_raw += entry_cost_raw
+                        if args.debug_trades_out:
+                            hold_seconds = (current_ts - tr["entry_ts"]) / np.timedelta64(1, "s")
+                            trade_rows.append({
+                                "day": str(day),
+                                "execution_mode": "burst_stream",
+                                "entry_ts": str(tr["entry_ts"]),
+                                "exit_ts": str(current_ts),
+                                "hold_seconds": float(hold_seconds),
+                                "side": int(tr["side"]),
+                                "qty": float(tr["qty"]),
+                                "entry_cost_raw": float(tr["entry_cost_raw"]),
+                                "exit_cost_raw": float(exit_cost_raw),
+                                "gross_raw": float(gross_edge_raw),
+                                "net_raw": float(net_edge_raw),
+                                "pred": float(tr["pred"]),
+                                "pred_raw": float(np.sinh(tr["pred"])),
+                                "pred_move_per_share": float(np.sinh(tr["pred"]) / max(float(tr["burst_vol"]), 1e-12)),
+                                "gate": "" if np.isnan(tr["gate"]) else float(tr["gate"]),
+                                "burst_volume": float(tr["burst_vol"]),
+                            })
+                        day_pnl_raw += net_edge_raw
                         total_exit_spread_cost_raw += exit_cost_raw
+                        total_spread_cost_raw += exit_cost_raw
+                        if args.pnl_space == "raw":
+                            day_pnl += net_edge_raw
+                        else:
+                            day_pnl += np.arcsinh(net_edge_raw)
 
-                    net_edge_raw = signed_edge_raw - spread_cost_raw
-                    gross_edge = signed_edge_raw if args.pnl_space == "raw" else np.arcsinh(signed_edge_raw)
-                    cost_edge = spread_cost_raw if args.pnl_space == "raw" else np.arcsinh(spread_cost_raw)
-                    net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+                burst_vol_i = float(vol_day[i])
+                qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * burst_vol_i)
+                pred_raw = np.sinh(pred)
+                pred_move_per_share = pred_raw / max(burst_vol_i, 1e-12)
+                signal_evals += 1
 
-                    side_stats[side]["trades"] += 1
-                    side_stats[side]["wins"] += int(net_edge_raw > 0)
-                    side_stats[side]["gross"] += gross_edge
-                    side_stats[side]["cost"] += cost_edge
-                    side_stats[side]["net"] += net_edge
+                side = 0
+                gate = np.nan
+                dir_i = float(day_df['Direction'].to_numpy()[i])  # Pull direction here for ALL modes
 
-                    if args.debug_trades_out:
-                        trade_rows.append({
-                            "day": str(day),
-                            "execution_mode": "label_proxy",
-                            "entry_ts": str(current_ts),
-                            "exit_ts": str(current_ts),
-                            "hold_seconds": 0.0,
-                            "side": int(side),
-                            "qty": float(qty),
-                            "entry_cost_raw": float(spread_cost_raw),
-                            "exit_cost_raw": 0.0,
-                            "gross_raw": float(signed_edge_raw),
-                            "net_raw": float(net_edge_raw),
-                            "pred": float(pred),
-                            "pred_raw": float(pred_raw),
-                            "pred_move_per_share": float(pred_move_per_share),
-                            "gate": "" if np.isnan(gate) else float(gate),
-                            "burst_volume": float(burst_vol_i),
+                if args.signal_mode == "percentile":
+                    if pred > current_long_thresh:
+                        side = dir_i
+                    elif pred < current_short_thresh:
+                        side = -dir_i
+                elif args.signal_mode == "cost_aware":
+                    # Cost-aware trigger: use predicted per-share move...
+                    spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
+                    spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
+                    per_share_cost = (
+                        args.spread_multiplier * spread_entry_val
+                        + args.spread_exit_multiplier * spread_exit_val
+                    )
+                    gate = args.cost_buffer_mult * per_share_cost
+
+                    if pred_move_per_share > gate:
+                        side = dir_i       # Trade WITH the informational burst
+                    elif pred_move_per_share < -gate:
+                        side = -dir_i      # Trade AGAINST a mean-reverting burst
+                else:
+                    # Direction-only trigger: trade purely on predicted sign.
+                    if pred > 0:
+                        side = dir_i
+                    elif pred < 0:
+                        side = -dir_i
+
+                if side == 1:
+                    signal_pass_long += 1
+                elif side == -1:
+                    signal_pass_short += 1
+                else:
+                    signal_reject += 1
+
+                if args.debug_signals_out:
+                    signal_rows.append({
+                        "day": str(day),
+                        "ts": str(current_ts),
+                        "target": args.target,
+                        "pred": float(pred),
+                        "pred_raw": float(pred_raw),
+                        "pred_move_per_share": float(pred_move_per_share),
+                        "gate": "" if np.isnan(gate) else float(gate),
+                        "signal_side": int(side),
+                        "burst_volume": float(burst_vol_i),
+                        "qty": float(qty),
+                    })
+
+                if side != 0:
+                    if side > 0:
+                        total_longs += 1
+                    else:
+                        total_shorts += 1
+                    total_trades += 1
+
+                if side != 0:
+                    if args.execution_mode == "label_proxy":
+                        # permanence label encodes approx. burst_volume * price_move; convert to per-share move.
+                        gross_edge_raw = np.sinh(y_day[i])
+                        edge_per_share = gross_edge_raw / max(burst_vol_i, 1e-12)
+                        signed_edge_raw = side * qty * edge_per_share
+
+                        spread_cost_raw = 0.0
+                        if use_spread_cost:
+                            spread_entry_val = max(0.0, float(spread_entry_day[i]))
+                            spread_exit_val = max(0.0, float(spread_exit_day[i]))
+                            entry_cost_raw = (
+                                args.spread_multiplier * qty * spread_entry_val
+                            )
+                            exit_cost_raw = (
+                                args.spread_exit_multiplier * qty * spread_exit_val
+                            )
+                            spread_cost_raw = entry_cost_raw + exit_cost_raw
+                            total_entry_spread_cost_raw += entry_cost_raw
+                            total_exit_spread_cost_raw += exit_cost_raw
+
+                        net_edge_raw = signed_edge_raw - spread_cost_raw
+                        gross_edge = signed_edge_raw if args.pnl_space == "raw" else np.arcsinh(signed_edge_raw)
+                        cost_edge = spread_cost_raw if args.pnl_space == "raw" else np.arcsinh(spread_cost_raw)
+                        net_edge = net_edge_raw if args.pnl_space == "raw" else np.arcsinh(net_edge_raw)
+
+                        side_stats[side]["trades"] += 1
+                        side_stats[side]["wins"] += int(net_edge_raw > 0)
+                        side_stats[side]["gross"] += gross_edge
+                        side_stats[side]["cost"] += cost_edge
+                        side_stats[side]["net"] += net_edge
+
+                        if args.debug_trades_out:
+                            trade_rows.append({
+                                "day": str(day),
+                                "execution_mode": "label_proxy",
+                                "entry_ts": str(current_ts),
+                                "exit_ts": str(current_ts),
+                                "hold_seconds": 0.0,
+                                "side": int(side),
+                                "qty": float(qty),
+                                "entry_cost_raw": float(spread_cost_raw),
+                                "exit_cost_raw": 0.0,
+                                "gross_raw": float(signed_edge_raw),
+                                "net_raw": float(net_edge_raw),
+                                "pred": float(pred),
+                                "pred_raw": float(pred_raw),
+                                "pred_move_per_share": float(pred_move_per_share),
+                                "gate": "" if np.isnan(gate) else float(gate),
+                                "burst_volume": float(burst_vol_i),
+                            })
+
+                        day_pnl_raw += net_edge_raw
+                        total_spread_cost_raw += spread_cost_raw
+                        if args.pnl_space == "raw":
+                            day_pnl += net_edge_raw
+                        else:
+                            day_pnl += np.arcsinh(net_edge_raw)
+                    else:
+                        # Open a round-trip trade now; realize PnL when a later burst reaches horizon.
+                        if stream_quote_mode:
+                            entry_px = float(entry_ask_day[i]) if side > 0 else float(entry_bid_day[i])
+                            entry_cost_raw = 0.0
+                        else:
+                            entry_mid = float(mid_day[i])
+                            spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
+                            entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
+                            total_entry_spread_cost_raw += entry_cost_raw
+                            total_spread_cost_raw += entry_cost_raw
+
+                        due_ts = day_end_ts if close_style_target else (current_ts + hold_delta)
+                        # If there is no later event to close against, skip this entry.
+                        if due_ts <= current_ts:
+                            continue
+
+                        open_trades.append({
+                            "due_ts": due_ts,
+                            "entry_mid": entry_mid if not stream_quote_mode else 0.0,
+                            "entry_px": entry_px if stream_quote_mode else 0.0,
+                            "qty": qty,
+                            "side": side,
+                            "entry_cost_raw": entry_cost_raw,
+                            "entry_ts": current_ts,
+                            "pred": pred,
+                            "gate": gate,
+                            "burst_vol": burst_vol_i,
                         })
 
-                    day_pnl_raw += net_edge_raw
-                    total_spread_cost_raw += spread_cost_raw
-                    if args.pnl_space == "raw":
-                        day_pnl += net_edge_raw
-                    else:
-                        day_pnl += np.arcsinh(net_edge_raw)
-                else:
-                    # Open a round-trip trade now; realize PnL when a later burst reaches horizon.
-                    if stream_quote_mode:
-                        entry_px = float(entry_ask_day[i]) if side > 0 else float(entry_bid_day[i])
-                        entry_cost_raw = 0.0
-                    else:
-                        entry_mid = float(mid_day[i])
-                        spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
-                        entry_cost_raw = qty * args.spread_multiplier * spread_entry_val
-                        total_entry_spread_cost_raw += entry_cost_raw
-                        total_spread_cost_raw += entry_cost_raw
-
-                    due_ts = day_end_ts if close_style_target else (current_ts + hold_delta)
-                    # If there is no later event to close against, skip this entry.
-                    if due_ts <= current_ts:
-                        continue
-
-                    open_trades.append({
-                        "due_ts": due_ts,
-                        "entry_mid": entry_mid if not stream_quote_mode else 0.0,
-                        "entry_px": entry_px if stream_quote_mode else 0.0,
-                        "qty": qty,
-                        "side": side,
-                        "entry_cost_raw": entry_cost_raw,
-                        "entry_ts": current_ts,
-                        "pred": pred,
-                        "gate": gate,
-                        "burst_vol": burst_vol_i,
-                    })
-                
                 recent_predictions.append(pred)
             
         daily_pnls.append(day_pnl)
