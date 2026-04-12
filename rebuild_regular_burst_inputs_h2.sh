@@ -4,7 +4,7 @@
 # 1) Baseline files used by model-zoo / SGD runners
 # 2) shared_cache files used by sweep_frac + optuna_physical
 
-set -Eeo pipefail
+
 
 ROOT=${ROOT:-/u/scratch/n/nicjia/order-burst-analysis}
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
@@ -30,6 +30,9 @@ cd "${ROOT}"
 module load gcc/10.2.0
 module load python/3.9.6
 source "${ROOT}/.venv/bin/activate"
+
+set -Eeo pipefail
+trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 silence_tag() {
   local s="$1"
