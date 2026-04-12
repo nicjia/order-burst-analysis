@@ -87,6 +87,85 @@ print(bp.get("kappa", 0.0))
 PY
 }
 
+validate_dataset() {
+  local path="$1"
+  local expected_ticker="$2"
+
+  if [ ! -s "${path}" ]; then
+    echo "ERROR: Cannot find dataset ${path}." >&2
+    return 1
+  fi
+
+  echo "Validating CSV integrity: ${path}"
+  if ! python3 - "${path}" "${expected_ticker}" <<'PY'
+import csv
+import math
+import sys
+
+path = sys.argv[1]
+expected_ticker = sys.argv[2]
+
+rows = 0
+bad_ticker = 0
+finite_tclose = 0
+finite_clop = 0
+finite_clcl = 0
+
+with open(path, newline='') as f:
+    r = csv.DictReader(f)
+    required = {'Ticker'}
+    missing = [c for c in required if c not in (r.fieldnames or [])]
+    if missing:
+        print(f"ERROR: Missing required columns: {missing}")
+        sys.exit(2)
+
+    has_tclose = 'Perm_tCLOSE' in r.fieldnames
+    has_clop = 'Perm_CLOP' in r.fieldnames
+    has_clcl = 'Perm_CLCL' in r.fieldnames
+
+    for row in r:
+        rows += 1
+        if row.get('Ticker', '') != expected_ticker:
+            bad_ticker += 1
+
+        for key, acc_name in (('Perm_tCLOSE', 'tclose'), ('Perm_CLOP', 'clop'), ('Perm_CLCL', 'clcl')):
+            v = (row.get(key) or '').strip()
+            if not v:
+                continue
+            try:
+                fv = float(v)
+            except Exception:
+                continue
+            if math.isfinite(fv):
+                if acc_name == 'tclose': finite_tclose += 1
+                elif acc_name == 'clop': finite_clop += 1
+                else: finite_clcl += 1
+
+if rows == 0:
+    print("ERROR: CSV has zero rows.")
+    sys.exit(3)
+
+print(f"rows={rows} bad_ticker_rows={bad_ticker} finite_tclose={finite_tclose} finite_clop={finite_clop} finite_clcl={finite_clcl}")
+
+if bad_ticker > 0:
+    print(f"ERROR: Ticker column does not match expected ticker ({expected_ticker}).")
+    sys.exit(4)
+
+if finite_tclose == 0 and finite_clop == 0 and finite_clcl == 0:
+    print("ERROR: Permanence targets are all non-finite/empty.")
+    sys.exit(5)
+PY
+  then
+    echo "ERROR: Dataset ${path} failed validation." >&2
+    echo "Recompute it with forced ticker to avoid missing data:" >&2
+    echo "  python3 src_py/compute_permanence.py ${path} open_all.csv close_all.csv --kappa 0 --ticker ${expected_ticker}" >&2
+    return 1
+  fi
+
+  echo "Dataset validation passed."
+  return 0
+}
+
 run_one_ticker() {
   local ticker="$1"
   local cls_key
@@ -94,8 +173,9 @@ run_one_ticker() {
 
   local data_path
   printf -v data_path "${DATA_TEMPLATE}" "${ticker}"
-  if [ ! -s "${data_path}" ]; then
-    echo "ERROR: Missing input dataset for ${ticker}: ${data_path}" >&2
+  
+  if ! validate_dataset "${data_path}" "${ticker}"; then
+    echo "Skipping ${ticker} due to validation failure." >&2
     return 1
   fi
 
