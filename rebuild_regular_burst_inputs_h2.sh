@@ -1,13 +1,20 @@
 #!/bin/bash
+#$ -cwd
+#$ -S /bin/bash
+#$ -V
+#$ -j y
+#$ -t 1-4
+#$ -o logs/rebuild_data_$JOB_ID.$TASK_ID.out
+#$ -l h_data=10G,h_rt=4:00:00
+#$ -pe shared 4
+
 # Rebuild non-archive burst inputs with current data_processor + permanence logic.
-# Covers:
-# 1) Baseline files used by model-zoo / SGD runners
-# 2) shared_cache files used by sweep_frac + optuna_physical
-
-
+# Designed as a Parallel Array Job (Task 1=NVDA, 2=TSLA, 3=JPM, 4=MS)
 
 ROOT=${ROOT:-/u/scratch/n/nicjia/order-burst-analysis}
-TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
+# Define the master list of tickers. The array job will index into this.
+TICKERS_ARRAY=("NVDA" "TSLA" "JPM" "MS")
+
 REBUILD_BASELINE=${REBUILD_BASELINE:-1}
 REBUILD_SHARED_CACHE=${REBUILD_SHARED_CACHE:-1}
 
@@ -24,6 +31,7 @@ RTH_END=${RTH_END:-57600}
 WORKERS=${WORKERS:-${NSLOTS:-4}}
 
 cd "${ROOT}"
+mkdir -p logs
 
 . /etc/profile
 . /u/local/Modules/default/init/bash
@@ -108,6 +116,12 @@ build_shared_cache_for_ticker() {
     local raw_csv="${precompute_dir}/bursts_${ticker}_s${s_tag}.csv"
     local perm_csv="${precompute_dir}/bursts_${ticker}_s${s_tag}_filtered.csv"
 
+    # Only skip if the FINAL filtered file already exists and has data
+    if [ -s "${perm_csv}" ]; then
+      echo "[${ticker}] SKIP: shared_cache s=${s} already complete -> ${perm_csv}"
+      continue
+    fi
+
     if [ "${REBUILD_SHARED_CACHE}" = "1" ]; then
       rm -f "${raw_csv}" "${perm_csv}"
     fi
@@ -131,28 +145,37 @@ build_shared_cache_for_ticker() {
 main() {
   ensure_data_processor
 
+  # Determine which ticker this specific cluster job should run
+  if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "undefined" ]; then
+    idx=$((SGE_TASK_ID - 1))
+    if [ "${idx}" -lt 0 ] || [ "${idx}" -ge "${#TICKERS_ARRAY[@]}" ]; then
+      echo "ERROR: Task ${SGE_TASK_ID} out of range for array size ${#TICKERS_ARRAY[@]}" >&2
+      exit 1
+    fi
+    TARGET_TICKER="${TICKERS_ARRAY[$idx]}"
+  else
+    # Fallback if run manually without qsub
+    TARGET_TICKER="${TICKERS_ARRAY[0]}" 
+    echo "WARNING: Running interactively outside of qsub array. Defaulting to ${TARGET_TICKER}."
+  fi
+
   echo "==============================================="
-  echo "Rebuild regular burst inputs"
+  echo "Rebuilding burst inputs for: ${TARGET_TICKER}"
   echo "Root: ${ROOT}"
-  echo "Tickers: ${TICKERS}"
   echo "Rebuild baseline: ${REBUILD_BASELINE}"
   echo "Rebuild shared_cache: ${REBUILD_SHARED_CACHE}"
   echo "Workers: ${WORKERS}"
   echo "==============================================="
 
-  for ticker in ${TICKERS}; do
-    echo ""
-    echo "========== ${ticker} =========="
-    if [ "${REBUILD_BASELINE}" = "1" ]; then
-      build_baseline_for_ticker "${ticker}"
-    fi
-    if [ "${REBUILD_SHARED_CACHE}" = "1" ]; then
-      build_shared_cache_for_ticker "${ticker}"
-    fi
-  done
+  if [ "${REBUILD_BASELINE}" = "1" ]; then
+    build_baseline_for_ticker "${TARGET_TICKER}"
+  fi
+  if [ "${REBUILD_SHARED_CACHE}" = "1" ]; then
+    build_shared_cache_for_ticker "${TARGET_TICKER}"
+  fi
 
   echo ""
-  echo "DONE: rebuilt regular burst/permanence inputs."
+  echo "DONE: rebuilt regular burst/permanence inputs for ${TARGET_TICKER}."
 }
 
 main "$@"
