@@ -7,8 +7,6 @@
 #$ -l h_data=12G,h_rt=08:00:00
 #$ -pe shared 4
 
-
-
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
 
@@ -29,9 +27,8 @@ SILENCE_TAG=${SILENCE_TAG:-s2p0}
 START_DATE=${START_DATE:-2019-01-01}
 END_DATE=${END_DATE:-2022-12-31}
 
-ARCHIVE_STOCK_FOLDER=${ARCHIVE_STOCK_FOLDER:-"${ROOT}/data/archive_2019_2022/NVDA"}
-ARCHIVE_RAW_CSV=${ARCHIVE_RAW_CSV:-"${ROOT}/results/bursts_NVDA_archive_2019_2022_raw.csv"}
-ARCHIVE_PERM_CSV=${ARCHIVE_PERM_CSV:-"${ROOT}/results/bursts_NVDA_archive_2019_2022_permanence.csv"}
+# POINT THIS EXACTLY TO YOUR PRE-BUILT RESULTS CSV
+ARCHIVE_PERM_CSV=${ARCHIVE_PERM_CSV:-"${ROOT}/results/nvda_archive_2019_2022_raw_s2p0_filtered.csv"}
 
 BASE_SILENCE=${BASE_SILENCE:-0.5}
 BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
@@ -95,52 +92,14 @@ PY
 }
 
 build_archive_dataset_if_missing() {
+  # This will instantly return true now that ARCHIVE_PERM_CSV points to your real file!
   if [ -s "${ARCHIVE_PERM_CSV}" ]; then
     echo "Using existing archive permanence CSV: ${ARCHIVE_PERM_CSV}"
     return 0
   fi
-
-  if [ ! -x "${ROOT}/data_processor" ]; then
-    echo "ERROR: data_processor is missing or not executable at ${ROOT}/data_processor" >&2
-    return 1
-  fi
-
-  if [ ! -d "${ARCHIVE_STOCK_FOLDER}" ]; then
-    echo "ERROR: Missing archive stock folder ${ARCHIVE_STOCK_FOLDER}" >&2
-    return 1
-  fi
-
-  echo "Building archive raw bursts from ${ARCHIVE_STOCK_FOLDER}"
-  ./data_processor "${ARCHIVE_STOCK_FOLDER}" "${ARCHIVE_RAW_CSV}" \
-    -s "${BASE_SILENCE}" \
-    -v "${BASE_VOL_FRAC}" \
-    -d "${BASE_DIR_THRESH}" \
-    -r "${BASE_VOL_RATIO}" \
-    -k 0 \
-    -t "${BASE_TAU_MAX}" \
-    -j "${NSLOTS:-4}" \
-    -b 34200 -e 57600
-
-  if [ ! -s "${ARCHIVE_RAW_CSV}" ]; then
-    echo "ERROR: data_processor did not produce ${ARCHIVE_RAW_CSV}" >&2
-    return 1
-  fi
-
-  echo "Computing permanence columns for archive dataset"
-  python3 src_py/compute_permanence.py \
-    "${ARCHIVE_RAW_CSV}" \
-    "${ROOT}/open_all.csv" \
-    "${ROOT}/close_all.csv" \
-    --kappa 0
-
-  local produced="${ARCHIVE_RAW_CSV%.csv}_filtered.csv"
-  if [ ! -s "${produced}" ]; then
-    echo "ERROR: compute_permanence did not produce ${produced}" >&2
-    return 1
-  fi
-
-  mv "${produced}" "${ARCHIVE_PERM_CSV}"
-  echo "Archive permanence dataset ready: ${ARCHIVE_PERM_CSV}"
+  
+  echo "ERROR: Cannot find ${ARCHIVE_PERM_CSV}. Please ensure it is in the results/ folder." >&2
+  return 1
 }
 
 main() {

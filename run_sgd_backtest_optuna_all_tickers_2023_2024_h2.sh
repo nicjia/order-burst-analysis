@@ -3,10 +3,10 @@
 #$ -S /bin/bash
 #$ -V
 #$ -j y
-#$ -o logs/sgd_optuna_2023_2024_$JOB_ID_$TASK_ID.out
+#$ -t 1-4
+#$ -o logs/sgd_optuna_2023_2024_$JOB_ID.$TASK_ID.out
 #$ -l h_data=10G,h_rt=08:00:00
 #$ -pe shared 4
-
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
 cd "${ROOT}"
@@ -145,7 +145,8 @@ run_one_ticker() {
     | tee "${out_prefix}.log"
 }
 
-if [ -n "${SGE_TASK_ID:-}" ]; then
+# Safely check if we are in an array job
+if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "undefined" ]; then
   read -r -a ticker_arr <<< "${TICKERS}"
   idx=$((SGE_TASK_ID - 1))
   if [ "${idx}" -lt 0 ] || [ "${idx}" -ge "${#ticker_arr[@]}" ]; then
@@ -154,6 +155,7 @@ if [ -n "${SGE_TASK_ID:-}" ]; then
   fi
   run_one_ticker "${ticker_arr[$idx]}"
 else
+  # Fallback to sequential if run directly
   for ticker in ${TICKERS}; do
     run_one_ticker "${ticker}"
   done
