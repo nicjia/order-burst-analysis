@@ -3,7 +3,8 @@
 #$ -S /bin/bash
 #$ -V
 #$ -j y
-#$ -o logs/tmp_dual_volfrac_$JOB_ID.out
+#$ -t 1-4
+#$ -o logs/tmp_dual_volfrac_$JOB_ID.$TASK_ID.out
 #$ -l h_data=12G,h_rt=12:00:00
 #$ -pe shared 4
 
@@ -12,8 +13,6 @@
 # Runs BOTH approaches overnight:
 # 1) Financial objective scan over vol_frac (score = mean_net_per_trade * log(trade_count + 1))
 # 2) Feature-not-filter run with dust-level filtering
-#
-# This script does not overwrite your existing Optuna JSON files.
 
 ROOT=${ROOT:-/u/scratch/n/nicjia/order-burst-analysis}
 cd "${ROOT}"
@@ -29,7 +28,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 mkdir -p logs results
 
 # ----- User-tunable knobs -----
-TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
+TICKERS_ARRAY=("NVDA" "TSLA" "JPM" "MS")
 TARGET=${TARGET:-reg_clop}
 START_DATE=${START_DATE:-2023-01-01}
 END_DATE=${END_DATE:-2024-12-31}
@@ -49,14 +48,12 @@ DUST_VOL_RATIO=${DUST_VOL_RATIO:-1.0}
 METHOD2_COST_BUFFER=${METHOD2_COST_BUFFER:-1.0}
 METHOD2_SIGNAL_MODE=${METHOD2_SIGNAL_MODE:-cost_aware}
 
-# Shared execution settings.
-EXECUTION_MODE=${EXECUTION_MODE:-burst_stream}
+# Shared execution settings (FIXED for Overnight Targets)
+EXECUTION_MODE=${EXECUTION_MODE:-phase3_flow}
+PHASE3_THRESH=${PHASE3_THRESH:-5.0} # <-- Required for Phase 3!
 POSITION_MODE=${POSITION_MODE:-fraction}
 POSITION_SIZE_MULT=${POSITION_SIZE_MULT:-1.0}
 SHARES_PER_TRADE=${SHARES_PER_TRADE:-1.0}
-SPREAD_COL=${SPREAD_COL:-Spread}
-SPREAD_MULT=${SPREAD_MULT:-0.5}
-SPREAD_EXIT_MULT=${SPREAD_EXIT_MULT:-0.5}
 
 RUN_TAG=$(date +%Y%m%d_%H%M%S)
 OUT_ROOT="results/tmp_dual_volfrac_${RUN_TAG}"
@@ -95,8 +92,6 @@ resolve_optuna_json() {
   fi
 
   echo "ERROR: Missing optuna params for ${ticker} ${cls_key}" >&2
-  echo "  Tried: ${preferred}" >&2
-  echo "  Tried: ${fallback}" >&2
   return 1
 }
 
@@ -147,9 +142,7 @@ if rows == 0:
     print('ERROR: CSV has zero rows')
     sys.exit(3)
 if bad_ticker > 0:
-    print(f'ERROR: bad_ticker_rows={bad_ticker}')
     sys.exit(4)
-print(f'rows={rows} bad_ticker_rows={bad_ticker}')
 PY
 }
 
@@ -176,14 +169,12 @@ run_backtest() {
     --end-date "${END_DATE}" \
     --ticker "${ticker}" \
     --execution-mode "${EXECUTION_MODE}" \
+    --phase3-thresh "${PHASE3_THRESH}" \
     --signal-mode "${signal_mode}" \
     --cost-buffer-mult "${cost_buffer}" \
     --position-mode "${POSITION_MODE}" \
     --position-size-mult "${POSITION_SIZE_MULT}" \
     --shares-per-trade "${SHARES_PER_TRADE}" \
-    --spread-col "${SPREAD_COL}" \
-    --spread-multiplier "${SPREAD_MULT}" \
-    --spread-exit-multiplier "${SPREAD_EXIT_MULT}" \
     --daily-open-csv open_all.csv \
     --daily-close-csv close_all.csv \
     --debug-trades-out "${out_prefix}_debug_trades.csv" \
@@ -222,66 +213,62 @@ PY
 
 main() {
   local cls_key
-  cls_key=$(cls_key_for_target "${TARGET}")
+  # Force cls_10m so Optuna's base parameters don't starve the model with crazy Kappas
+  cls_key="cls_10m"
 
   local summary_csv="${OUT_ROOT}/financial_scan_summary.csv"
-  echo "ticker,method,vol_frac,dir_thresh,vol_ratio,kappa,trades,mean_net_raw,score_mean_logtrades,out_prefix" > "${summary_csv}"
+
+  if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "undefined" ]; then
+    idx=$((SGE_TASK_ID - 1))
+    TARGET_TICKER="${TICKERS_ARRAY[$idx]}"
+  else
+    TARGET_TICKER="${TICKERS_ARRAY[0]}" 
+  fi
+
+  # Only print the header if we are Task 1 so we don't jumble the CSV
+  if [ "${SGE_TASK_ID:-1}" -eq 1 ]; then
+    echo "ticker,method,vol_frac,dir_thresh,vol_ratio,kappa,trades,mean_net_raw,score_mean_logtrades,out_prefix" > "${summary_csv}"
+  fi
 
   echo "==============================================="
-  echo "tmp dual overnight run"
-  echo "OUT_ROOT: ${OUT_ROOT}"
-  echo "Tickers: ${TICKERS}"
+  echo "Running dual overnight test for: ${TARGET_TICKER}"
   echo "Target: ${TARGET}"
-  echo "Window: ${START_DATE} -> ${END_DATE}"
   echo "==============================================="
 
-  for ticker in ${TICKERS}; do
-    local data_path
-    printf -v data_path "${DATA_TEMPLATE}" "${ticker}"
+  local data_path
+  printf -v data_path "${DATA_TEMPLATE}" "${TARGET_TICKER}"
+  validate_dataset "${data_path}" "${TARGET_TICKER}"
 
-    echo ""
-    echo "[${ticker}] validating dataset ${data_path}"
-    validate_dataset "${data_path}" "${ticker}"
+  local json_file
+  json_file=$(resolve_optuna_json "${TARGET_TICKER}" "${cls_key}")
 
-    local json_file
-    json_file=$(resolve_optuna_json "${ticker}" "${cls_key}")
+  mapfile -t P < <(parse_optuna_params "${json_file}")
+  local opt_silence="${P[0]}"
+  local opt_d="${P[2]}"
+  local opt_r="${P[3]}"
+  local opt_k="${P[4]}"
 
-    mapfile -t P < <(parse_optuna_params "${json_file}")
-    local opt_silence="${P[0]}"
-    local opt_vf="${P[1]}"
-    local opt_d="${P[2]}"
-    local opt_r="${P[3]}"
-    local opt_k="${P[4]}"
+  # Method 1: financial objective scan over vol_frac.
+  for vf in ${VOL_FRAC_GRID}; do
+    local out_prefix="${OUT_ROOT}/${TARGET_TICKER}_method1_vf${vf}_d${opt_d}_r${opt_r}_k${opt_k}"
+    echo "[${TARGET_TICKER}] METHOD1 vf=${vf}"
+    run_backtest "${TARGET_TICKER}" "${data_path}" "${out_prefix}" "${vf}" "${opt_d}" "${opt_r}" "${opt_k}" "${METHOD1_SIGNAL_MODE}" "${METHOD1_COST_BUFFER}"
 
-    echo "[${ticker}] optuna base params from ${json_file}"
-    echo "  silence=${opt_silence} vf=${opt_vf} d=${opt_d} r=${opt_r} k=${opt_k}"
-
-    # Method 1: financial objective scan over vol_frac.
-    for vf in ${VOL_FRAC_GRID}; do
-      local out_prefix="${OUT_ROOT}/${ticker}_method1_vf${vf}_d${opt_d}_r${opt_r}_k${opt_k}"
-      echo "[${ticker}] METHOD1 vf=${vf} (d=${opt_d} r=${opt_r} k=${opt_k})"
-      run_backtest "${ticker}" "${data_path}" "${out_prefix}" "${vf}" "${opt_d}" "${opt_r}" "${opt_k}" "${METHOD1_SIGNAL_MODE}" "${METHOD1_COST_BUFFER}"
-
-      local metrics
-      metrics=$(score_trades_csv "${out_prefix}_debug_trades.csv")
-      IFS=',' read -r trades mean_net score <<< "${metrics}"
-      echo "${ticker},method1,${vf},${opt_d},${opt_r},${opt_k},${trades},${mean_net},${score},${out_prefix}" >> "${summary_csv}"
-    done
-
-    # Method 2: dust filter + feature learning.
-    local out_prefix2="${OUT_ROOT}/${ticker}_method2_dust_vf${DUST_VOL_FRAC}_d${DUST_DIR_THRESH}_r${DUST_VOL_RATIO}_k${DUST_KAPPA}"
-    echo "[${ticker}] METHOD2 dust vf=${DUST_VOL_FRAC} d=${DUST_DIR_THRESH} r=${DUST_VOL_RATIO} k=${DUST_KAPPA}"
-    run_backtest "${ticker}" "${data_path}" "${out_prefix2}" "${DUST_VOL_FRAC}" "${DUST_DIR_THRESH}" "${DUST_VOL_RATIO}" "${DUST_KAPPA}" "${METHOD2_SIGNAL_MODE}" "${METHOD2_COST_BUFFER}"
-
-    local metrics2
-    metrics2=$(score_trades_csv "${out_prefix2}_debug_trades.csv")
-    IFS=',' read -r trades2 mean_net2 score2 <<< "${metrics2}"
-    echo "${ticker},method2,${DUST_VOL_FRAC},${DUST_DIR_THRESH},${DUST_VOL_RATIO},${DUST_KAPPA},${trades2},${mean_net2},${score2},${out_prefix2}" >> "${summary_csv}"
+    local metrics
+    metrics=$(score_trades_csv "${out_prefix}_debug_trades.csv")
+    IFS=',' read -r trades mean_net score <<< "${metrics}"
+    echo "${TARGET_TICKER},method1,${vf},${opt_d},${opt_r},${opt_k},${trades},${mean_net},${score},${out_prefix}" >> "${summary_csv}"
   done
 
-  echo ""
-  echo "DONE. Summary: ${summary_csv}"
-  echo "All artifacts: ${OUT_ROOT}"
+  # Method 2: dust filter + feature learning.
+  local out_prefix2="${OUT_ROOT}/${TARGET_TICKER}_method2_dust_vf${DUST_VOL_FRAC}_d${DUST_DIR_THRESH}_r${DUST_VOL_RATIO}_k${DUST_KAPPA}"
+  echo "[${TARGET_TICKER}] METHOD2 dust vf=${DUST_VOL_FRAC}"
+  run_backtest "${TARGET_TICKER}" "${data_path}" "${out_prefix2}" "${DUST_VOL_FRAC}" "${DUST_DIR_THRESH}" "${DUST_VOL_RATIO}" "${DUST_KAPPA}" "${METHOD2_SIGNAL_MODE}" "${METHOD2_COST_BUFFER}"
+
+  local metrics2
+  metrics2=$(score_trades_csv "${out_prefix2}_debug_trades.csv")
+  IFS=',' read -r trades2 mean_net2 score2 <<< "${metrics2}"
+  echo "${TARGET_TICKER},method2,${DUST_VOL_FRAC},${DUST_DIR_THRESH},${DUST_VOL_RATIO},${DUST_KAPPA},${trades2},${mean_net2},${score2},${out_prefix2}" >> "${summary_csv}"
 }
 
 main "$@"
