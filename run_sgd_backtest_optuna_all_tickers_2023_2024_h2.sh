@@ -169,8 +169,9 @@ PY
 run_one_ticker() {
   local ticker="$1"
   local cls_key
-  cls_key=$(cls_key_for_target "${TARGET_TO_RUN}")
-
+  # FORCE the use of permissive 10-minute physical parameters to avoid starving the overnight model
+  cls_key="cls_10m"
+  
   local data_path
   printf -v data_path "${DATA_TEMPLATE}" "${ticker}"
   
