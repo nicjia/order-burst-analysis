@@ -198,6 +198,8 @@ def main():
                         help="Minimum lag after burst before eligibility in phase3_flow")
     parser.add_argument("--phase3-flow-col", choices=["signed_volume", "volume"], default="signed_volume",
                         help="Flow aggregation component Q_b for phase3_flow")
+    parser.add_argument("--phase3-percentile", type=float, default=90.0,
+                        help="Dynamic rolling percentile for informational threshold")
     
     args = parser.parse_args()
 
@@ -515,20 +517,35 @@ def main():
 
         # 4. Trigger simulated entries
         if args.execution_mode == "phase3_flow":
-            # Phase III: classify informational bursts on predicted permanence,
-            # aggregate into a daily order-flow signal, then trade close->next close/open.
-            informational = preds > args.phase3_thresh
+            # Phase III: classify informational bursts dynamically using rolling history
+            if len(recent_predictions) > 100:
+                dynamic_thresh_long = np.percentile(recent_predictions, args.phase3_percentile)
+                dynamic_thresh_short = np.percentile(recent_predictions, 100.0 - args.phase3_percentile)
+                gate = float(dynamic_thresh_long) # Use long threshold for logging
+            else:
+                # Fallback for the first few days before the queue fills up
+                dynamic_thresh_long = args.phase3_thresh 
+                dynamic_thresh_short = -args.phase3_thresh
+                gate = float(args.phase3_thresh)
+
+            # Check both the top tail (long) and bottom tail (short)
+            informational_long = preds > dynamic_thresh_long
+            informational_short = preds < dynamic_thresh_short
+            informational = informational_long | informational_short
+            
             lag_eligible = (day_end_ts - event_ts_day) >= phase3_lag_delta
             selected = informational & lag_eligible
             q_component = vol_day.copy()
+            
             if args.phase3_flow_col == "signed_volume" and "Direction" in day_df.columns:
                 dir_day = day_df["Direction"].to_numpy(dtype=float)
                 q_component = q_component * dir_day
+                
             flow_signal = float(np.nansum(q_component[selected])) if np.any(selected) else 0.0
 
             signal_evals += 1
             side = 1 if flow_signal > 0 else (-1 if flow_signal < 0 else 0)
-            gate = float(args.phase3_thresh)
+            
             if side == 1:
                 signal_pass_long += 1
             elif side == -1:
