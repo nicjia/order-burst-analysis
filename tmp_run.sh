@@ -5,7 +5,7 @@
 #$ -j y
 #$ -t 1-4
 #$ -o logs/eval_10m_$JOB_ID.$TASK_ID.out
-#$ -l h_data=12G,h_rt=12:00:00
+#$ -l h_data=12G,h_rt=4:00:00
 #$ -pe shared 4
 
 # eval_10m_horizon_h2.sh
