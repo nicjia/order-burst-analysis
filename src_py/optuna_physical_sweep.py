@@ -13,7 +13,6 @@ then slices them instantly during trials, applies walk-forward validation with a
 L2 logistic regression model, and returns out-of-sample AUC to Optuna.
 
 Usage:
-  python3 src_py/optuna_physical_sweep.py --ticker NVDA --target cls_10m --trials 100
 """
 
 import argparse
@@ -65,8 +64,6 @@ EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
 DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
 }
-DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m',
-                    'reg_1m', 'reg_3m', 'reg_5m', 'reg_10m'}
 
 def _time_ordered_train_val_split(df, min_train_months=3):
     months = sorted(df['Month'].unique())
@@ -207,7 +204,6 @@ def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", required=True)
-    parser.add_argument("--target", default="cls_10m")
     parser.add_argument("--trials", type=int, default=100)
     parser.add_argument("--start-date", default="2023-01-01")
     parser.add_argument("--end-date", default="2024-12-31")

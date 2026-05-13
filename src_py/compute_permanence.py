@@ -100,13 +100,15 @@ def main():
     trading_days = np.array(sorted(pd.Index(close_px.index).astype(int).tolist()), dtype=np.int64)
 
     # ── tCLOSE: uses CloseMid from burst CSV (intraday) ─────
-    bursts['Perm_tCLOSE'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CloseMid'] - bursts['StartPrice']).astype('float64'))
+    # Path A execution: Trade at t+10 minutes. Entry price is Mid_10m.
+    # Fallback to StartPrice if Mid_10m is null.
+    entry_price = bursts['Mid_10m'] if 'Mid_10m' in bursts.columns else bursts['StartPrice']
+    entry_price = entry_price.fillna(bursts['StartPrice']).astype('float64')
 
-    # ── Intraday forward returns (1m, 3m, 5m, 10m) ──────────
-    for label, col in [('1m', 'Mid_1m'), ('3m', 'Mid_3m'),
-                       ('5m', 'Mid_5m'), ('10m', 'Mid_10m')]:
-        if col in bursts.columns:
-            bursts[f'Perm_t{label}'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts[col] - bursts['StartPrice']).astype('float64'))
+    bursts['Perm_tCLOSE'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CloseMid'] - entry_price).astype('float64'))
+
+    # ── Intraday forward returns REMOVED ──────────
+    # Intraday horizons (1m, 3m, 5m, 10m) removed to focus purely on tCLOSE and overnight
 
     # ── D_b: Short-Horizon Decay Filter (Eq 3.2) ────────────
     #  D_b = (1/4) Σ_τ Q_b × Direction × (Mid_τ − StartPrice)
@@ -184,10 +186,10 @@ def main():
                         bursts.loc[ridx, 'CRSP_CL_day'] = cl_days[ii[ok]]
 
     # CLOP: x = open price of next trading day
-    bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - bursts['StartPrice']).astype('float64'))
+    bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - entry_price).astype('float64'))
 
     # CLCL: x = close price of next trading day
-    bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - bursts['StartPrice']).astype('float64'))
+    bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - entry_price).astype('float64'))
 
     # Coverage diagnostics for overnight horizons
     clop_valid = bursts['Perm_CLOP'].notna().sum()

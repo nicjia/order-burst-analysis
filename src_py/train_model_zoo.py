@@ -218,8 +218,6 @@ DB_TAINTED_FEATURES = {
 # Targets whose horizon is ≤ 10m.  D_b averages displacements at 1/3/5/10m,
 # so it leaks future prices for ALL intraday horizons (including 10m itself,
 # since Mid_10m is both a D_b input and the basis of Perm_t10m).
-DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m',
-                    'reg_1m', 'reg_3m', 'reg_5m', 'reg_10m'}
 
 EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     'TimeOfDay', 'LogVolume', 'LogPeakImpact', 'ImpactPerShare',
@@ -393,10 +391,6 @@ def engineer_features(df):
 
 TARGET_MAP = {
     # ── Intraday horizons (use UNFILTERED data only) ─────────
-    'cls_1m':     ('Perm_t1m',     'binary',  0.0),   # φ_t1m > 0
-    'cls_3m':     ('Perm_t3m',     'binary',  0.0),   # φ_t3m > 0
-    'cls_5m':     ('Perm_t5m',     'binary',  0.0),   # φ_t5m > 0
-    'cls_10m':    ('Perm_t10m',    'binary',  0.0),   # φ_t10m > 0
     # ── End-of-day / next-day (valid on filtered OR unfiltered) ─
     'cls_close':  ('Perm_tCLOSE', 'binary',  0.0),   # φ_tCLOSE > 0  (same-day 4pm)
     'cls_clop':   ('Perm_CLOP',   'binary',  0.0),   # φ_CLOP > 0    (next-day open)
@@ -405,10 +399,6 @@ TARGET_MAP = {
     'reg_close':  ('Perm_tCLOSE', 'regression', None),
     'reg_clop':   ('Perm_CLOP',   'regression', None),
     'reg_clcl':   ('Perm_CLCL',   'regression', None),
-    'reg_1m':     ('Perm_t1m',    'regression', None),
-    'reg_3m':     ('Perm_t3m',    'regression', None),
-    'reg_5m':     ('Perm_t5m',    'regression', None),
-    'reg_10m':    ('Perm_t10m',   'regression', None),
 }
 
 
@@ -1428,10 +1418,8 @@ def get_target_list(target_arg):
     elif target_arg == 'all_reg':
         return [k for k, v in TARGET_MAP.items() if v[1] == 'regression']
     elif target_arg == 'all_horizons':
-        return ['cls_close', 'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m']
     elif target_arg == 'short':
         # Intraday horizons — run on UNFILTERED data only
-        return ['cls_1m', 'cls_3m', 'cls_5m', 'cls_10m']
     elif target_arg == 'long':
         # End-of-day / next-day — valid on filtered data
         return ['cls_close', 'cls_clop', 'cls_clcl']
@@ -1449,7 +1437,6 @@ def main():
              'or comma-separated keys (e.g. lgb,xgb,rf)')
     ap.add_argument('--target', default='cls_close',
         help='Target(s): all, all_cls, all_reg, all_horizons, '
-             'or comma-separated (e.g. cls_close,cls_1m,reg_close)')
     ap.add_argument('--features', default='extended',
         choices=['base', 'extended'],
         help='Feature set to use (default: extended)')

@@ -16,20 +16,12 @@ sys.path.append(str(Path(__file__).parent.absolute()))
 from silence_optimized_sweep import compute_trailing_adv, classify_and_filter
 
 TARGET_MAP = {
-    'cls_1m':     ('Perm_t1m',     'binary',  0.0),
-    'cls_3m':     ('Perm_t3m',     'binary',  0.0),
-    'cls_5m':     ('Perm_t5m',     'binary',  0.0),
-    'cls_10m':    ('Perm_t10m',    'binary',  0.0),
     'cls_close':  ('Perm_tCLOSE', 'binary',  0.0),
     'cls_clop':   ('Perm_CLOP',   'binary',  0.0),
     'cls_clcl':   ('Perm_CLCL',   'binary',  0.0),
     'reg_close':  ('Perm_tCLOSE', 'regression', None),
     'reg_clop':   ('Perm_CLOP',   'regression', None),
     'reg_clcl':   ('Perm_CLCL',   'regression', None),
-    'reg_1m':     ('Perm_t1m',    'regression', None),
-    'reg_3m':     ('Perm_t3m',    'regression', None),
-    'reg_5m':     ('Perm_t5m',    'regression', None),
-    'reg_10m':    ('Perm_t10m',   'regression', None),
 }
 
 PATCH_VERSION = "phase3-flow-v1-20260409"
@@ -44,7 +36,6 @@ def build_target(df, target_key):
     else:
         raise ValueError(
             "SGD backtester currently supports regression targets only: "
-            "reg_1m/reg_3m/reg_5m/reg_10m/reg_close/reg_clop/reg_clcl"
         )
 
 BASE_FEATURE_COLS = [
@@ -69,8 +60,6 @@ EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
 DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
 }
-DB_LEAKY_TARGETS = {'cls_1m', 'cls_3m', 'cls_5m', 'cls_10m',
-                    'reg_1m', 'reg_3m', 'reg_5m', 'reg_10m'}
 
 def get_features(df, target_key):
     feat_cols = list(EXTENDED_FEATURE_COLS)
@@ -85,14 +74,10 @@ def get_features(df, target_key):
 
 def infer_exit_spread_col(target_key):
     horizon_map = {
-        "reg_1m": "Spread_1m",
-        "reg_3m": "Spread_3m",
-        "reg_5m": "Spread_5m",
-        "reg_10m": "Spread_10m",
-        "cls_1m": "Spread_1m",
-        "cls_3m": "Spread_3m",
-        "cls_5m": "Spread_5m",
-        "cls_10m": "Spread_10m",
+        
+        
+        
+        
         "reg_close": "Spread_close",
         "cls_close": "Spread_close",
         "reg_clop": "Spread_clop",
@@ -105,14 +90,6 @@ def infer_exit_spread_col(target_key):
 
 def infer_horizon_minutes(target_key):
     horizon_map = {
-        "reg_1m": 1,
-        "reg_3m": 3,
-        "reg_5m": 5,
-        "reg_10m": 10,
-        "cls_1m": 1,
-        "cls_3m": 3,
-        "cls_5m": 5,
-        "cls_10m": 10,
     }
     return horizon_map.get(target_key, 10)
 
@@ -134,7 +111,6 @@ warnings.filterwarnings("ignore")
 def main():
     parser = argparse.ArgumentParser(description="Online SGD PnL Backtester")
     parser.add_argument("--data", required=True, help="Path to raw, unfiltered bursts CSV (e.g., nvda_raw_bursts.csv)")
-    parser.add_argument("--target", default="reg_10m", help="Target key (e.g., reg_10m or reg_close)")
     parser.add_argument("--start-date", default="2023-01-01",
                         help="Inclusive start date for burst rows (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="2024-12-31",
@@ -171,7 +147,6 @@ def main():
     parser.add_argument("--exit-ask-col", default="EndAsk",
                         help="Ask column used for quote-based burst_stream exit")
     parser.add_argument("--horizon-minutes", type=float, default=None,
-                        help="Hold horizon for burst_stream mode. If omitted, inferred from target (e.g., reg_10m -> 10)")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
     parser.add_argument("--position-mode", choices=["fraction", "shares"], default="fraction",
@@ -300,7 +275,6 @@ def main():
         y, task_type, meta = build_target(filtered, args.target)
         X, feat_available = get_features(filtered, args.target)
         if task_type != 'regression':
-            print("ERROR: Online SGD backtester must predict continuous scale Regression tasks (e.g. reg_10m) to calculate PnL!")
             sys.exit(1)
     except Exception as e:
         print("ERROR building AI features:", e)
