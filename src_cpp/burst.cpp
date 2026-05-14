@@ -1,25 +1,41 @@
 #include "burst.h"
-#include <cmath> // Required for std::abs
+#include <cmath>    // Required for std::abs, std::exp, std::sqrt
+#include <numeric>  // Required for std::accumulate
 
 BurstDetector::BurstDetector(double silence_threshold, double min_volume_threshold, double direction_threshold,
-                             double volume_ratio_threshold) 
+                             double volume_ratio_threshold,
+                             double hawkes_beta, double trigger_intensity) 
     : silence_threshold_(silence_threshold), 
     min_volume_threshold_(min_volume_threshold),
       direction_threshold_(direction_threshold),
       volume_ratio_threshold_(volume_ratio_threshold),
+      hawkes_beta_(hawkes_beta),
+      trigger_intensity_(trigger_intensity),
+      use_hawkes_(hawkes_beta > 0.0),
+      hawkes_intensity_(0.0),
       is_active_(false), 
       last_msg_time_(0),
       last_mid_price_(0),
+      round_lot_count_(0),
       buy_count_(0),
       sell_count_(0),
       buy_volume_(0),
       sell_volume_(0),
       max_price_(0),
-      min_price_(0) {}
+      min_price_(0),
+      pending_preburst_cancel_rate_(0.0) {}
 
 
 // ── TERMINATION: when does a burst end? ─────────────────────
 bool BurstDetector::should_terminate(double time_gap) {
+    if (use_hawkes_) {
+        // Hawkes Process: decay the current intensity by the elapsed time gap.
+        // If the decayed intensity (before adding the new trade) drops below
+        // the trigger threshold, the burst has ended.
+        double decayed = hawkes_intensity_ * std::exp(-hawkes_beta_ * time_gap);
+        return decayed < trigger_intensity_;
+    }
+    // Legacy silence-based termination
     return time_gap > silence_threshold_;
 }
 
@@ -82,12 +98,41 @@ void BurstDetector::classify_direction() {
     }
 }
 
+// ── PATH 1: Compute VWAP/TWAP Fingerprint metrics ──────────
+void BurstDetector::compute_fingerprint() {
+    int n = (int)trade_sizes_.size();
+    if (n <= 1) {
+        // Single-trade burst: variance is 0 by definition (no variation).
+        // This avoids N-1 divide-by-zero for sample variance.
+        current_burst_.trade_size_variance = 0.0;
+    } else {
+        // Sample variance: Var = Σ(x_i - mean)^2 / (N - 1)
+        double sum = 0.0;
+        for (int s : trade_sizes_) sum += (double)s;
+        double mean = sum / n;
+
+        double sq_sum = 0.0;
+        for (int s : trade_sizes_) {
+            double diff = (double)s - mean;
+            sq_sum += diff * diff;
+        }
+        current_burst_.trade_size_variance = sq_sum / (n - 1);
+    }
+
+    current_burst_.round_lot_pct = (n > 0) ? (double)round_lot_count_ / n : 0.0;
+}
+
 // ── FILTER: is this burst worth keeping? ────────────────────
 bool BurstDetector::passes_filter() {
     return (double)current_burst_.volume >= min_volume_threshold_;
 }
 
 // ─────────────────────────────────────────────────────────────
+
+// ── SET PRE-BURST CANCEL RATE (called from main.cpp) ────────
+void BurstDetector::set_preburst_cancel_rate(double rate) {
+    pending_preburst_cancel_rate_ = rate;
+}
 
 // ── FLUSH: finalize active burst at end of day ──────────────
 bool BurstDetector::flush(Burst& result) {
@@ -97,6 +142,7 @@ bool BurstDetector::flush(Burst& result) {
     current_burst_.end_price = last_mid_price_;
     current_burst_.trade_count = buy_count_ + sell_count_;
     classify_direction();
+    compute_fingerprint();
 
     is_active_ = false;
 
@@ -119,6 +165,10 @@ void BurstDetector::reset() {
     max_price_ = 0;
     min_price_ = 0;
     current_burst_ = {};
+    trade_sizes_.clear();
+    round_lot_count_ = 0;
+    hawkes_intensity_ = 0.0;
+    pending_preburst_cancel_rate_ = 0.0;
 }
 
 bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst& result) {
@@ -149,8 +199,9 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
             current_burst_.end_price = last_mid_price_;
             current_burst_.trade_count = buy_count_ + sell_count_;
             
-            // 2. Classify
+            // 2. Classify direction & compute fingerprint
             classify_direction();
+            compute_fingerprint();
 
             // 3. Filter and Emit
             if (passes_filter()) {
@@ -160,6 +211,12 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
             
             // 4. Reset Active State
             is_active_ = false;
+        } else if (use_hawkes_) {
+            // Hawkes: burst survives — decay and add this trade's contribution
+            double time_gap_h = msg.time - last_msg_time_;
+            hawkes_intensity_ = hawkes_intensity_ * std::exp(-hawkes_beta_ * time_gap_h) + 1.0;
+            current_burst_.hawkes_peak_intensity = std::max(
+                current_burst_.hawkes_peak_intensity, hawkes_intensity_);
         }
     }
 
@@ -179,6 +236,19 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
         current_burst_.sell_ratio = 0.0;
         current_burst_.minmax_vol_ratio = 1.0;
         
+        // Path 1: reset fingerprint state
+        current_burst_.trade_size_variance = 0.0;
+        current_burst_.round_lot_pct = 0.0;
+        trade_sizes_.clear();
+        round_lot_count_ = 0;
+
+        // Path 2: reset Hawkes intensity — first trade seeds at 1.0
+        hawkes_intensity_ = 1.0;
+        current_burst_.hawkes_peak_intensity = 1.0;
+
+        // Path 3: capture the pre-burst cancel rate computed by main.cpp
+        current_burst_.preburst_cancel_rate = pending_preburst_cancel_rate_;
+        
         // last_mid_price_ is now the price from the most recent message 
         // (even if it was a quote update 1ms ago), so this is accurate.
         current_burst_.start_price = (last_mid_price_ > 0) ? last_mid_price_ : current_mid;
@@ -195,6 +265,12 @@ bool BurstDetector::process(const LobsterMessage& msg, double current_mid, Burst
 
     // Accumulate Current Trade
     current_burst_.volume += msg.size;
+
+    // Path 1: track individual trade sizes for variance calculation
+    trade_sizes_.push_back(msg.size);
+    if (msg.size % 100 == 0) {
+        round_lot_count_++;
+    }
     
     // LOBSTER Direction: -1 = Buyer-initiated, 1 = Seller-initiated
     if (msg.direction == -1) {

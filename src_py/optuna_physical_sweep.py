@@ -60,6 +60,14 @@ EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     'NetRecentFlow', 'BurstDensity5m',
     'TimeOfDaySin', 'TimeOfDayCos', 'IsOpen15', 'IsClose15', 'HourOfDay',
     'PriceLevel', 'VolPerDollar',
+    # ── Path 1: VWAP/TWAP Fingerprinting ──
+    'TradeSizeVariance', 'RoundLotPct', 'LogTradeSizeVariance',
+    # ── Path 2: Hawkes Process ──
+    'HawkesPeakIntensity', 'LogHawkesIntensity',
+    # ── Path 3: Pre-Burst Quote Depletion ──
+    'PreBurstCancelRate',
+    # ── Cross-path interactions ──
+    'Variance_x_Volume', 'CancelRate_x_Impact', 'Hawkes_x_Volume',
 ]
 DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',

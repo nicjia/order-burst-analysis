@@ -244,6 +244,19 @@ EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     # ── Rolling price context ──
     'PriceLevel',    # log(StartPrice)
     'VolPerDollar',  # BurstVolume * StartPrice (dollar volume)
+    # ── Path 1: VWAP/TWAP Fingerprinting ──
+    'TradeSizeVariance',   # Variance of trade sizes within burst (0 = TWAP clip)
+    'RoundLotPct',         # Fraction of trades that are 100-share multiples
+    'LogTradeSizeVariance', # log1p(TradeSizeVariance)
+    # ── Path 2: Hawkes Process ──
+    'HawkesPeakIntensity', # Peak intensity score during burst
+    'LogHawkesIntensity',  # log1p(HawkesPeakIntensity)
+    # ── Path 3: Pre-Burst Quote Depletion ──
+    'PreBurstCancelRate',  # L1 cancellation rate on opposing side before burst
+    # ── Cross-path interactions ──
+    'Variance_x_Volume',   # TradeSizeVariance × LogVolume
+    'CancelRate_x_Impact', # PreBurstCancelRate × LogPeakImpact
+    'Hawkes_x_Volume',     # HawkesPeakIntensity × LogVolume
     # ── Multi-horizon permanence at shorter horizon (if avail) ──
     # (NO — these are targets / forward-looking. Excluded.)
 ]
@@ -381,6 +394,21 @@ def engineer_features(df):
         df.loc[idx, 'BurstDensity5m']      = density
 
     df['NetRecentFlow'] = df['RecentBurstVol'] - df['RecentBurstVolOpp']
+
+    # ── Path 1/2/3: New microstructure feature engineering ────
+    # These columns come from the C++ data_processor.  Gracefully
+    # default to 0 if running on older CSVs that lack them.
+    for col in ('TradeSizeVariance', 'RoundLotPct', 'HawkesPeakIntensity', 'PreBurstCancelRate'):
+        if col not in df.columns:
+            df[col] = 0.0
+
+    df['LogTradeSizeVariance'] = np.log1p(df['TradeSizeVariance'])
+    df['LogHawkesIntensity']   = np.log1p(df['HawkesPeakIntensity'])
+
+    # Cross-path interactions
+    df['Variance_x_Volume']    = df['TradeSizeVariance'] * df['LogVolume']
+    df['CancelRate_x_Impact']  = df['PreBurstCancelRate'] * df['LogPeakImpact']
+    df['Hawkes_x_Volume']      = df['HawkesPeakIntensity'] * df['LogVolume']
 
     return df
 

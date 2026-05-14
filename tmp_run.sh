@@ -12,9 +12,7 @@
 #
 # Evaluates all 3 Long-Term horizons (reg_clop, reg_clcl, reg_close).
 # Execution Mode: phase3_flow (Rolling 90th Percentile Sniper).
-# Runs a side-by-side comparison for all 4 tickers:
-# 1) Method 1: Strict Optuna Geometric Filters
-# 2) Method 2: Permissive Dust Filters (Feature Learning)
+# Uses Hawkes process parameters instead of legacy silence.
 
 ROOT=${ROOT:-/u/scratch/n/nicjia/order-burst-analysis}
 cd "${ROOT}"
@@ -35,7 +33,7 @@ EXECUTION_MODE="phase3_flow"
 
 START_DATE=${START_DATE:-2023-01-01}
 END_DATE=${END_DATE:-2024-12-31}
-SILENCE_TAG=${SILENCE_TAG:-s0p5}
+HAWKES_TAG=${HAWKES_TAG:-b1p0_i0p5}
 DATA_TEMPLATE="results/bursts_%s_baseline_unfiltered.csv"
 
 # Fixed Sizing (1 Share)
@@ -59,7 +57,7 @@ cls_key_for_target() {
 resolve_optuna_json() {
   local ticker="$1"
   local cls_key="$2"
-  local preferred="results/optuna_physical/${ticker}/best_physical_params_${cls_key}_${SILENCE_TAG}.json"
+  local preferred="results/optuna_physical/${ticker}/best_physical_params_${cls_key}_${HAWKES_TAG}.json"
   local fallback="results/optuna_physical/${ticker}/best_physical_params_${cls_key}.json"
   local safe_fallback="results/optuna_physical/${ticker}/best_physical_params_cls_10m.json"
 
@@ -73,7 +71,7 @@ resolve_optuna_json() {
 
 parse_optuna_params() {
   local json_file="$1"
-  python3 - "$json_file" "$SILENCE_TAG" <<'PY'
+  python3 - "$json_file" "$HAWKES_TAG" <<'PY'
 import json
 import sys
 obj = json.load(open(sys.argv[1]))
@@ -98,7 +96,7 @@ run_backtest() {
   python3 src_py/online_sgd_backtest.py \
     --data "${data_path}" \
     --target "${target}" \
-    --silence-tag "${SILENCE_TAG}" \
+    --hawkes-tag "${HAWKES_TAG}" \
     --vol-frac "${vol_frac}" \
     --dir-thresh "${dir_thresh}" \
     --vol-ratio "${vol_ratio}" \
@@ -161,6 +159,7 @@ main() {
 
   echo "==============================================="
   echo "Running Long-Term Eval For: ${TARGET_TICKER}"
+  echo "Hawkes tag: ${HAWKES_TAG}"
   echo "==============================================="
 
   local data_path

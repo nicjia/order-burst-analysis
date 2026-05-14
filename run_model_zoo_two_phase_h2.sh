@@ -8,6 +8,8 @@
 # Phase 2 (Tasks 85-147): LONG horizons on FILTERED data
 #   → cls_close, cls_clop, cls_clcl
 #
+# Uses Hawkes process (-H, -I) instead of legacy silence (-s).
+#
 # Usage:
 #   qsub run_model_zoo_two_phase_h2.sh
 #===================================================================
@@ -40,19 +42,14 @@ echo "Compiler: $(g++ --version | head -n 1)"
 TICKERS=${TICKERS:-"NVDA TSLA JPM MS"}
 
 # Input filename suffixes for short/long phases.
-# Model-zoo should benchmark models on a single baseline extraction.
-# Default behavior:
-#   short phase -> bursts_${TICKER}_baseline_unfiltered.csv   (kappa=0 permanence-enriched)
-#   long phase  -> bursts_${TICKER}_baseline_filtered.csv     (kappa=BASE_KAPPA_LONG)
-#
-# If you really need legacy names, set:
-#   UNFILTERED_SUFFIX=unfiltered FILTERED_SUFFIX=filtered
 UNFILTERED_SUFFIX=${UNFILTERED_SUFFIX:-baseline_unfiltered}
 FILTERED_SUFFIX=${FILTERED_SUFFIX:-baseline_filtered}
 
-# Default burst extraction params for model-selection baseline.
-# These should stay fixed while choosing the best model family.
-BASE_SILENCE=${BASE_SILENCE:-0.5}
+# ── Hawkes Process parameters (replace legacy silence) ───────
+BASE_HAWKES_BETA=${BASE_HAWKES_BETA:-1.0}
+BASE_TRIGGER_INTENSITY=${BASE_TRIGGER_INTENSITY:-0.5}
+BASE_CANCEL_WINDOW=${BASE_CANCEL_WINDOW:-0.050}
+
 BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
 BASE_DIR_THRESH=${BASE_DIR_THRESH:-0.8}
 BASE_VOL_RATIO=${BASE_VOL_RATIO:-0.3}
@@ -63,7 +60,6 @@ BASE_KAPPA_LONG=${BASE_KAPPA_LONG:-0.5}
 FORCE_REBUILD_BASELINE=${FORCE_REBUILD_BASELINE:-0}
 
 # PREP_ONLY=1 runs a sequential precompute stage and exits.
-# This avoids all array-task races during data preparation.
 PREP_ONLY=${PREP_ONLY:-0}
 PREP_WORKERS=${PREP_WORKERS:-1}
 
@@ -109,7 +105,9 @@ prepare_one_ticker() {
     if [ ! -f "${raw_csv}" ]; then
         echo "INFO: Building baseline bursts for ${ticker} -> ${raw_csv}"
         ./data_processor "${ROOT}/data/${ticker}" "${raw_csv}" \
-            -s "${BASE_SILENCE}" \
+            -H "${BASE_HAWKES_BETA}" \
+            -I "${BASE_TRIGGER_INTENSITY}" \
+            -w "${BASE_CANCEL_WINDOW}" \
             -v "${BASE_VOL_FRAC}" \
             -d "${BASE_DIR_THRESH}" \
             -r "${BASE_VOL_RATIO}" \
@@ -177,7 +175,8 @@ prepare_all_baselines() {
     echo "=========================================="
     echo "Baseline Preparation (Sequential)"
     echo "  Tickers:      ${TICKERS}"
-    echo "  Params:       s=${BASE_SILENCE} v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO}"
+    echo "  Params:       H=${BASE_HAWKES_BETA} I=${BASE_TRIGGER_INTENSITY} w=${BASE_CANCEL_WINDOW}"
+    echo "                v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO}"
     echo "  Kappa long:   ${BASE_KAPPA_LONG}"
     echo "  Workers:      ${PREP_WORKERS}"
     echo "  Force rebuild:${FORCE_REBUILD_BASELINE}"
@@ -221,7 +220,8 @@ echo "  Job ID:       ${JOB_ID}"
 echo "  Task ID:      ${SGE_TASK_ID}  (0-based index: ${INDEX})"
 echo "  Phase:        ${TARGET}"
 echo "  Input suffix (short/long): ${UNFILTERED_SUFFIX} / ${FILTERED_SUFFIX}"
-echo "  Baseline params: s=${BASE_SILENCE} v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO} k_long=${BASE_KAPPA_LONG}"
+echo "  Baseline params: H=${BASE_HAWKES_BETA} I=${BASE_TRIGGER_INTENSITY} w=${BASE_CANCEL_WINDOW}"
+echo "                   v_frac=${BASE_VOL_FRAC} d=${BASE_DIR_THRESH} r=${BASE_VOL_RATIO} k_long=${BASE_KAPPA_LONG}"
 echo "  Force rebuild baseline: ${FORCE_REBUILD_BASELINE}"
 echo "  Tickers:      ${TICKERS}"
 echo "  Hostname:     $(hostname)"

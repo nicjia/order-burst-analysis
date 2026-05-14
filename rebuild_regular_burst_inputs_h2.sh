@@ -10,6 +10,9 @@
 
 # Rebuild non-archive burst inputs with current data_processor + permanence logic.
 # Designed as a Parallel Array Job (Task 1=NVDA, 2=TSLA, 3=JPM, 4=MS)
+#
+# Uses Hawkes process intensity decay (-H, -I) instead of legacy silence (-s).
+# Adds pre-burst cancel window (-w) for L1 quote depletion tracking.
 
 ROOT=${ROOT:-/u/scratch/n/nicjia/order-burst-analysis}
 # Define the master list of tickers. The array job will index into this.
@@ -18,14 +21,19 @@ TICKERS_ARRAY=("NVDA" "TSLA" "JPM" "MS")
 REBUILD_BASELINE=${REBUILD_BASELINE:-1}
 REBUILD_SHARED_CACHE=${REBUILD_SHARED_CACHE:-1}
 
-BASE_SILENCE=${BASE_SILENCE:-0.5}
+# ── Hawkes Process parameters (replace legacy silence) ───────
+BASE_HAWKES_BETA=${BASE_HAWKES_BETA:-1.0}
+BASE_TRIGGER_INTENSITY=${BASE_TRIGGER_INTENSITY:-0.5}
+BASE_CANCEL_WINDOW=${BASE_CANCEL_WINDOW:-0.050}
+
 BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
 BASE_DIR_THRESH=${BASE_DIR_THRESH:-0.8}
 BASE_VOL_RATIO=${BASE_VOL_RATIO:-0.3}
 BASE_TAU_MAX=${BASE_TAU_MAX:-10.0}
 BASE_KAPPA_LONG=${BASE_KAPPA_LONG:-0.5}
 
-SILENCE_VALUES=${SILENCE_VALUES:-"0.5 1.0 2.0"}
+# Sweep trigger_intensity only (keep β fixed per user directive)
+TRIGGER_INTENSITY_VALUES=${TRIGGER_INTENSITY_VALUES:-"0.3 0.5 0.8"}
 RTH_START=${RTH_START:-34200}
 RTH_END=${RTH_END:-57600}
 WORKERS=${WORKERS:-${NSLOTS:-4}}
@@ -42,9 +50,10 @@ source "${ROOT}/.venv/bin/activate"
 set -Eeo pipefail
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-silence_tag() {
-  local s="$1"
-  echo "${s}" | sed 's/\./p/g'
+hawkes_tag() {
+  local beta="$1"
+  local intensity="$2"
+  echo "b${beta}_i${intensity}" | sed 's/\./p/g'
 }
 
 ensure_data_processor() {
@@ -74,7 +83,9 @@ build_baseline_for_ticker() {
 
   echo "[${ticker}] baseline data_processor -> ${raw_csv}"
   ./data_processor "${stock_dir}" "${raw_csv}" \
-    -s "${BASE_SILENCE}" \
+    -H "${BASE_HAWKES_BETA}" \
+    -I "${BASE_TRIGGER_INTENSITY}" \
+    -w "${BASE_CANCEL_WINDOW}" \
     -v "${BASE_VOL_FRAC}" \
     -d "${BASE_DIR_THRESH}" \
     -r "${BASE_VOL_RATIO}" \
@@ -101,7 +112,7 @@ build_baseline_for_ticker() {
 build_shared_cache_for_ticker() {
   local ticker="$1"
   local stock_dir="${ROOT}/data/${ticker}"
-  local precompute_dir="results/silence_sweep_${ticker}/logreg_l2/shared_cache"
+  local precompute_dir="results/hawkes_sweep_${ticker}/logreg_l2/shared_cache"
 
   if [ ! -d "${stock_dir}" ]; then
     echo "WARN: Missing ${stock_dir}; skipping shared_cache for ${ticker}"
@@ -110,15 +121,15 @@ build_shared_cache_for_ticker() {
 
   mkdir -p "${precompute_dir}"
 
-  for s in ${SILENCE_VALUES}; do
-    local s_tag
-    s_tag=$(silence_tag "${s}")
-    local raw_csv="${precompute_dir}/bursts_${ticker}_s${s_tag}.csv"
-    local perm_csv="${precompute_dir}/bursts_${ticker}_s${s_tag}_filtered.csv"
+  for ti in ${TRIGGER_INTENSITY_VALUES}; do
+    local h_tag
+    h_tag=$(hawkes_tag "${BASE_HAWKES_BETA}" "${ti}")
+    local raw_csv="${precompute_dir}/bursts_${ticker}_${h_tag}.csv"
+    local perm_csv="${precompute_dir}/bursts_${ticker}_${h_tag}_filtered.csv"
 
     # Only skip if the FINAL filtered file already exists and has data
     if [ -s "${perm_csv}" ]; then
-      echo "[${ticker}] SKIP: shared_cache s=${s} already complete -> ${perm_csv}"
+      echo "[${ticker}] SKIP: shared_cache ti=${ti} already complete -> ${perm_csv}"
       continue
     fi
 
@@ -126,9 +137,11 @@ build_shared_cache_for_ticker() {
       rm -f "${raw_csv}" "${perm_csv}"
     fi
 
-    echo "[${ticker}] shared_cache s=${s} data_processor -> ${raw_csv}"
+    echo "[${ticker}] shared_cache ti=${ti} data_processor -> ${raw_csv}"
     ./data_processor "${stock_dir}" "${raw_csv}" \
-      -s "${s}" \
+      -H "${BASE_HAWKES_BETA}" \
+      -I "${ti}" \
+      -w "${BASE_CANCEL_WINDOW}" \
       -v 0 \
       -d 0.5 \
       -r 1.0 \
@@ -137,7 +150,7 @@ build_shared_cache_for_ticker() {
       -j "${WORKERS}" \
       -b "${RTH_START}" -e "${RTH_END}"
 
-    echo "[${ticker}] shared_cache s=${s} permanence kappa=0 -> ${perm_csv}"
+    echo "[${ticker}] shared_cache ti=${ti} permanence kappa=0 -> ${perm_csv}"
     python3 src_py/compute_permanence.py "${raw_csv}" open_all.csv close_all.csv --kappa 0 --ticker "${ticker}"
   done
 }
@@ -162,6 +175,8 @@ main() {
   echo "==============================================="
   echo "Rebuilding burst inputs for: ${TARGET_TICKER}"
   echo "Root: ${ROOT}"
+  echo "Hawkes: beta=${BASE_HAWKES_BETA} trigger=${BASE_TRIGGER_INTENSITY}"
+  echo "Cancel window: ${BASE_CANCEL_WINDOW}s"
   echo "Rebuild baseline: ${REBUILD_BASELINE}"
   echo "Rebuild shared_cache: ${REBUILD_SHARED_CACHE}"
   echo "Workers: ${WORKERS}"

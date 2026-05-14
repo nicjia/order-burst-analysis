@@ -23,14 +23,17 @@ mkdir -p logs results/sgd_backtests_archive_nvda
 
 TICKER=NVDA
 TARGET_TO_RUN=${TARGET_TO_RUN:-reg_clop}
-SILENCE_TAG=${SILENCE_TAG:-s2p0}
+HAWKES_TAG=${HAWKES_TAG:-b1p0_i0p5}
 START_DATE=${START_DATE:-2019-01-01}
 END_DATE=${END_DATE:-2022-12-31}
 
 # POINT THIS EXACTLY TO YOUR PRE-BUILT RESULTS CSV
-ARCHIVE_PERM_CSV=${ARCHIVE_PERM_CSV:-"${ROOT}/results/nvda_archive_2019_2022_raw_s2p0_filtered.csv"}
+ARCHIVE_PERM_CSV=${ARCHIVE_PERM_CSV:-"${ROOT}/results/nvda_archive_2019_2022_raw_${HAWKES_TAG}_filtered.csv"}
 
-BASE_SILENCE=${BASE_SILENCE:-0.5}
+# Hawkes parameters (for reference/logging only — data is prebuilt)
+BASE_HAWKES_BETA=${BASE_HAWKES_BETA:-1.0}
+BASE_TRIGGER_INTENSITY=${BASE_TRIGGER_INTENSITY:-0.5}
+BASE_CANCEL_WINDOW=${BASE_CANCEL_WINDOW:-0.050}
 BASE_VOL_FRAC=${BASE_VOL_FRAC:-0.0001}
 BASE_DIR_THRESH=${BASE_DIR_THRESH:-0.8}
 BASE_VOL_RATIO=${BASE_VOL_RATIO:-0.3}
@@ -55,7 +58,7 @@ cls_key_for_target() {
 
 resolve_optuna_json() {
   local cls_key="$1"
-  local preferred="results/optuna_physical/${TICKER}/best_physical_params_${cls_key}_${SILENCE_TAG}.json"
+  local preferred="results/optuna_physical/${TICKER}/best_physical_params_${cls_key}_${HAWKES_TAG}.json"
   local fallback="results/optuna_physical/${TICKER}/best_physical_params_${cls_key}.json"
 
   if [ -f "${preferred}" ]; then
@@ -75,15 +78,15 @@ resolve_optuna_json() {
 
 parse_optuna_params() {
   local json_file="$1"
-  python3 - "$json_file" "$SILENCE_TAG" <<'PY'
+  python3 - "$json_file" "$HAWKES_TAG" <<'PY'
 import json
 import sys
 
 json_file = sys.argv[1]
-default_silence = sys.argv[2]
+default_hawkes_tag = sys.argv[2]
 obj = json.load(open(json_file))
 bp = obj.get("best_params", {})
-print(bp.get("silence_tag", default_silence))
+print(bp.get("hawkes_tag", default_hawkes_tag))
 print(bp["vol_frac"])
 print(bp["dir_thresh"])
 print(bp["vol_ratio"])
@@ -173,13 +176,13 @@ main() {
   json_file=$(resolve_optuna_json "${cls_key}")
 
   mapfile -t P < <(parse_optuna_params "${json_file}")
-  local use_silence="${P[0]}"
+  local use_hawkes_tag="${P[0]}"
   local vol_frac="${P[1]}"
   local dir_thresh="${P[2]}"
   local vol_ratio="${P[3]}"
   local kappa="${P[4]}"
 
-  local out_prefix="results/sgd_backtests_archive_nvda/${TICKER}_${TARGET_TO_RUN}_${use_silence}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
+  local out_prefix="results/sgd_backtests_archive_nvda/${TICKER}_${TARGET_TO_RUN}_${use_hawkes_tag}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
 
   echo "================================================"
   echo "Ticker: ${TICKER}"
@@ -187,12 +190,13 @@ main() {
   echo "Archive date window: ${START_DATE} -> ${END_DATE}"
   echo "Params file: ${json_file}"
   echo "Data: ${ARCHIVE_PERM_CSV}"
+  echo "Hawkes tag: ${use_hawkes_tag}"
   echo "================================================"
 
   python3 src_py/online_sgd_backtest.py \
     --data "${ARCHIVE_PERM_CSV}" \
     --target "${TARGET_TO_RUN}" \
-    --silence-tag "${use_silence}" \
+    --hawkes-tag "${use_hawkes_tag}" \
     --vol-frac "${vol_frac}" \
     --dir-thresh "${dir_thresh}" \
     --vol-ratio "${vol_ratio}" \

@@ -174,6 +174,13 @@ struct MarketState {
     int    trade_volume_5m;   // total shares traded in prior 5 minutes
 };
 
+// ── Cancel event for Path 3: Pre-Burst Quote Depletion ──────
+struct CancelEvent {
+    double time;
+    int    direction;   // 1 = bid-side cancel, -1 = ask-side cancel
+    int    size;
+};
+
 struct BurstRecord {
     std::string ticker;
     std::string date;
@@ -216,7 +223,7 @@ void print_usage(const char* prog) {
               << "  stock_folder: folder containing *_message_0.csv day files\n"
               << "  output_file:  output CSV path\n"
               << "Options:\n"
-              << "  -s <silence>    silence threshold in seconds       (default: 1.0)\n"
+              << "  -s <silence>    silence threshold in seconds (legacy, used when -H 0)  (default: 1.0)\n"
               << "  -v <vol_frac>   burst volume fraction of trailing\n"
               << "                  14-day avg RTH trade volume         (default: 0.0001)\n"
               << "  -d <direction>  direction count-ratio threshold    (default: 0.9)\n"
@@ -225,7 +232,10 @@ void print_usage(const char* prog) {
               << "  -t <tau_max>    peak-impact horizon in seconds     (default: 10.0)\n"
               << "  -j <workers>    number of parallel day workers     (default: 1)\n"
               << "  -b <rth_start>  RTH start in sec-past-midnight     (default: 34200 = 09:30)\n"
-              << "  -e <rth_end>    RTH end   in sec-past-midnight     (default: 57600 = 16:00)\n";
+              << "  -e <rth_end>    RTH end   in sec-past-midnight     (default: 57600 = 16:00)\n"
+              << "  -H <beta>       Hawkes decay rate (0=disable, use -s) (default: 1.0)\n"
+              << "  -I <intensity>  Hawkes trigger intensity threshold (default: 0.5)\n"
+              << "  -w <window>     Pre-burst cancel window in seconds (default: 0.050)\n";
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -259,6 +269,9 @@ int main(int argc, char* argv[]) {
     double rth_start            = RTH_DEFAULT_START;
     double rth_end              = RTH_DEFAULT_END;
     int workers                 = 1;
+    double hawkes_beta          = 1.0;   // Hawkes decay rate (0 = legacy silence mode)
+    double trigger_intensity    = 0.5;   // Hawkes trigger threshold
+    double cancel_window        = 0.050; // Pre-burst cancel lookback in seconds
 
     for (int i = 3; i < argc; i += 2) {
         if (i + 1 >= argc) break;
@@ -272,6 +285,9 @@ int main(int argc, char* argv[]) {
         else if (opt == "-j") workers             = std::max(1, std::stoi(argv[i+1]));
         else if (opt == "-b") rth_start           = std::stod(argv[i+1]);
         else if (opt == "-e") rth_end             = std::stod(argv[i+1]);
+        else if (opt == "-H") hawkes_beta         = std::stod(argv[i+1]);
+        else if (opt == "-I") trigger_intensity   = std::stod(argv[i+1]);
+        else if (opt == "-w") cancel_window       = std::stod(argv[i+1]);
     }
 
     // ── Discover day files ──────────────────────────────────
@@ -327,6 +343,9 @@ int main(int argc, char* argv[]) {
               << "  vol_ratio_thresh=" << volume_ratio_threshold
               << "  kappa=" << kappa
               << "  tau_max=" << tau_max
+              << "  hawkes_beta=" << hawkes_beta
+              << "  trigger_intensity=" << trigger_intensity
+              << "  cancel_window=" << cancel_window
               << "  workers=" << workers
               << "  RTH=[" << rth_start << "," << rth_end << "]\n\n";
 
@@ -343,7 +362,8 @@ int main(int argc, char* argv[]) {
         << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
         << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
         << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
-        << "TradeCount5m,TradeVolume5m\n";
+        << "TradeCount5m,TradeVolume5m,"
+        << "TradeSizeVariance,RoundLotPct,HawkesPeakIntensity,PreBurstCancelRate\n";
 
     std::mutex log_mutex;
     std::mutex write_mutex;
@@ -366,7 +386,9 @@ int main(int argc, char* argv[]) {
             silence_threshold,
             day_min_volume_thresholds[day_idx],
             direction_threshold,
-            volume_ratio_threshold
+            volume_ratio_threshold,
+            hawkes_beta,
+            trigger_intensity
         );
         LobsterParser parser(msg_file);
 
@@ -394,6 +416,9 @@ int main(int argc, char* argv[]) {
         // (c) Burst start-time ring buffer for recent-burst features
         struct BurstStamp { double time; int direction; int volume; };
         std::deque<BurstStamp> burst_ring;
+
+        // ── Path 3: Cancel event ring buffer for pre-burst depletion ──
+        std::deque<CancelEvent> cancel_ring;
 
         LobsterMessage msg;
         Burst finished;
@@ -466,6 +491,31 @@ int main(int argc, char* argv[]) {
             return s;
         };
 
+        // Helper lambda: compute pre-burst cancellation rate on opposing side
+        // within cancel_window seconds before burst_start_time.
+        // opposing_direction: +1 for buy bursts (cancel on ask), -1 for sell bursts (cancel on bid)
+        // Since we don't know direction yet, we compute rate for BOTH sides and take the max.
+        auto calc_preburst_cancel_rate = [&](double burst_start_time) -> double {
+            // Prune events older than a generous lookback (e.g., 1 second) to bound memory
+            double prune_cutoff = burst_start_time - 1.0;
+            while (!cancel_ring.empty() && cancel_ring.front().time < prune_cutoff)
+                cancel_ring.pop_front();
+
+            double window_start = burst_start_time - cancel_window;
+            int ask_cancels = 0, bid_cancels = 0, total_events = 0;
+            for (auto it = cancel_ring.rbegin(); it != cancel_ring.rend(); ++it) {
+                if (it->time < window_start) break;
+                if (it->time > burst_start_time) continue;
+                total_events++;
+                if (it->direction == -1) ask_cancels++;  // ask-side cancel
+                else bid_cancels++;                       // bid-side cancel
+            }
+            if (total_events == 0) return 0.0;
+            // Return the higher of the two sides — the actual opposing side
+            // will be determined downstream when burst direction is known.
+            return (double)std::max(ask_cancels, bid_cancels) / (double)total_events;
+        };
+
         while (parser.next_message(msg)) {
             ++msg_count;
 
@@ -494,6 +544,12 @@ int main(int argc, char* argv[]) {
 
             // 3. Burst detection is restricted to Regular Trading Hours.
             //    Pre-market, opening auction, and post-close are excluded.
+            // Path 3: Track cancellations/deletions for pre-burst depletion
+            if (msg.type == 2 || msg.type == 3) {
+                // direction from LOBSTER: 1=buy-side, -1=sell-side
+                cancel_ring.push_back({msg.time, msg.direction, msg.size});
+            }
+
             if (msg.time < rth_start) continue;     // pre-market: skip
 
             // ── Update rolling accumulators (RTH only) ──────
@@ -523,6 +579,12 @@ int main(int argc, char* argv[]) {
 
             // Inside RTH — feed to burst detector
             if (current_mid > 0.0) {
+                // Path 3: compute and set pre-burst cancel rate before processing
+                bool is_trade_msg = (msg.type == 4 || msg.type == 5);
+                if (is_trade_msg) {
+                    double cancel_rate = calc_preburst_cancel_rate(msg.time);
+                    detector.set_preburst_cancel_rate(cancel_rate);
+                }
                 if (detector.process(msg, current_mid, finished)) {
                     // Snapshot market state AT THE TIME THE BURST STARTED
                     MarketState ms = snapshot_market_state(finished.start_time);
@@ -605,7 +667,11 @@ int main(int argc, char* argv[]) {
                     << std::setprecision(6) << ms.book_imbalance << ","
                     << std::setprecision(8) << ms.volatility_60s << ","
                     << ms.momentum_5s << "," << ms.momentum_30s << "," << ms.momentum_60s << ","
-                    << ms.trade_count_5m << "," << ms.trade_volume_5m
+                    << ms.trade_count_5m << "," << ms.trade_volume_5m << ","
+                    << std::setprecision(4) << b.trade_size_variance << ","
+                    << std::setprecision(6) << b.round_lot_pct << ","
+                    << std::setprecision(4) << b.hawkes_peak_intensity << ","
+                    << std::setprecision(6) << b.preburst_cancel_rate
                     << "\n";
             day_res.burst_kept++;
         }

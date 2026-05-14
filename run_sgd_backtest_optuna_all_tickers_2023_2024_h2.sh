@@ -24,7 +24,7 @@ mkdir -p logs results/sgd_backtests_optuna_2023_2024
 
 # Edit these defaults directly for quick reruns.
 TARGET_TO_RUN=${TARGET_TO_RUN:-reg_clop}
-SILENCE_TAG=${SILENCE_TAG:-s2p0}
+HAWKES_TAG=${HAWKES_TAG:-b1p0_i0p5}
 START_DATE=${START_DATE:-2023-01-01}
 END_DATE=${END_DATE:-2024-12-31}
 
@@ -51,7 +51,7 @@ cls_key_for_target() {
 resolve_optuna_json() {
   local ticker="$1"
   local cls_key="$2"
-  local preferred="results/optuna_physical/${ticker}/best_physical_params_${cls_key}_${SILENCE_TAG}.json"
+  local preferred="results/optuna_physical/${ticker}/best_physical_params_${cls_key}_${HAWKES_TAG}.json"
   local fallback="results/optuna_physical/${ticker}/best_physical_params_${cls_key}.json"
 
   if [ -f "${preferred}" ]; then
@@ -71,15 +71,15 @@ resolve_optuna_json() {
 
 parse_optuna_params() {
   local json_file="$1"
-  python3 - "$json_file" "$SILENCE_TAG" <<'PY'
+  python3 - "$json_file" "$HAWKES_TAG" <<'PY'
 import json
 import sys
 
 json_file = sys.argv[1]
-default_silence = sys.argv[2]
+default_hawkes_tag = sys.argv[2]
 obj = json.load(open(json_file))
 bp = obj.get("best_params", {})
-print(bp.get("silence_tag", default_silence))
+print(bp.get("hawkes_tag", default_hawkes_tag))
 print(bp["vol_frac"])
 print(bp["dir_thresh"])
 print(bp["vol_ratio"])
@@ -184,13 +184,13 @@ run_one_ticker() {
   json_file=$(resolve_optuna_json "${ticker}" "${cls_key}")
 
   mapfile -t P < <(parse_optuna_params "${json_file}")
-  local use_silence="${P[0]}"
+  local use_hawkes_tag="${P[0]}"
   local vol_frac="${P[1]}"
   local dir_thresh="${P[2]}"
   local vol_ratio="${P[3]}"
   local kappa="${P[4]}"
 
-  local out_prefix="results/sgd_backtests_optuna_2023_2024/${ticker}_${TARGET_TO_RUN}_${use_silence}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
+  local out_prefix="results/sgd_backtests_optuna_2023_2024/${ticker}_${TARGET_TO_RUN}_${use_hawkes_tag}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
 
   echo "================================================"
   echo "Ticker: ${ticker}"
@@ -198,12 +198,13 @@ run_one_ticker() {
   echo "Date window: ${START_DATE} -> ${END_DATE}"
   echo "Params file: ${json_file}"
   echo "Data: ${data_path}"
+  echo "Hawkes tag: ${use_hawkes_tag}"
   echo "================================================"
 
   python3 src_py/online_sgd_backtest.py \
     --data "${data_path}" \
     --target "${TARGET_TO_RUN}" \
-    --silence-tag "${use_silence}" \
+    --hawkes-tag "${use_hawkes_tag}" \
     --vol-frac "${vol_frac}" \
     --dir-thresh "${dir_thresh}" \
     --vol-ratio "${vol_ratio}" \
