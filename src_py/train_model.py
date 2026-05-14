@@ -111,6 +111,13 @@ FEATURE_COLS = [
     'SpreadXVolume',       # Spread * BurstVolume  — cost of crossing
     'RecentBurstCount',    # bursts in prior 5-min window (same direction)
     'RecentBurstVol',      # total volume of those recent bursts
+    # ── Path 1: VWAP/TWAP Fingerprinting ──
+    'TradeSizeVariance',   # Variance of trade sizes within burst (0 = TWAP clip)
+    'RoundLotPct',         # Fraction of trades that are 100-share multiples
+    # ── Path 2: Hawkes Process ──
+    'HawkesPeakIntensity', # Peak intensity score during burst
+    # ── Path 3: Pre-Burst Quote Depletion ──
+    'PreBurstCancelRate',  # L1 cancellation rate on opposing side before burst
 ]
 
 

@@ -11,12 +11,12 @@ cd "${ROOT}"
 . /u/local/Modules/default/init/bash
 module load gcc/10.2.0
 module load python/3.9.6
-source /u/scratch/n/nicjia/order-burst-analysis/.venv/bin/activate
+source "${ROOT}/.venv/bin/activate"
 
 set -Eeo pipefail
 
 TICKERS=(NVDA TSLA JPM MS)
-TARGETS=("cls_1m" "cls_3m" "cls_5m" "cls_10m" "cls_close" "cls_clop" "cls_clcl")
+TARGETS=("cls_close" "cls_clop" "cls_clcl")
 TRIALS=100
 START_DATE=${START_DATE:-2023-01-01}
 END_DATE=${END_DATE:-2024-12-31}
@@ -28,7 +28,7 @@ echo "Date window: ${START_DATE} -> ${END_DATE}"
 echo "Cache dir: results/hawkes_sweep_<TICKER>/logreg_l2/shared_cache/"
 echo "======================================================"
 
-if [ -n "${SGE_TASK_ID:-}" ]; then
+if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "undefined" ]; then
     IDX=$((SGE_TASK_ID - 1))
     if [ "${IDX}" -lt 0 ] || [ "${IDX}" -ge "${#TICKERS[@]}" ]; then
         echo "INFO: Task ${SGE_TASK_ID} out of range; exiting."
@@ -36,8 +36,9 @@ if [ -n "${SGE_TASK_ID:-}" ]; then
     fi
     TICKER=${TICKERS[$IDX]}
 else
-    # Fallback to local loop for testing
+    # Fallback: default to first ticker when run outside SGE array
     TICKER=${TICKERS[0]}
+    echo "INFO: SGE_TASK_ID not set or undefined; defaulting to ${TICKER}"
 fi
 
 echo "Running ticker=${TICKER}"

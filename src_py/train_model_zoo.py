@@ -218,6 +218,8 @@ DB_TAINTED_FEATURES = {
 # Targets whose horizon is ≤ 10m.  D_b averages displacements at 1/3/5/10m,
 # so it leaks future prices for ALL intraday horizons (including 10m itself,
 # since Mid_10m is both a D_b input and the basis of Perm_t10m).
+# Short-horizon targets have been removed from TARGET_MAP, so this is now empty.
+DB_LEAKY_TARGETS = set()
 
 EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     'TimeOfDay', 'LogVolume', 'LogPeakImpact', 'ImpactPerShare',

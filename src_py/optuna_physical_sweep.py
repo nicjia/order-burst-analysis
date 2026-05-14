@@ -3,16 +3,19 @@
 optuna_physical_sweep.py
 
 Uses Optuna to find the best physical burst-definition parameters:
-- silence_tag (s0p5, s1p0, s2p0)
+- hawkes_tag (b1p0_i0p3, b1p0_i0p5, b1p0_i0p8)
 - min_vol_frac (fraction of 14d trailing ADV)
 - dir_thresh (directional trade threshold)
 - vol_ratio (volume ratio max allowable)
 
 For a given stock and target, this preloads the precomputed unfiltered CSVs in memory,
-then slices them instantly during trials, applies walk-forward validation with a fast
-L2 logistic regression model, and returns out-of-sample AUC to Optuna.
+then slices them instantly during trials, applies walk-forward validation with a
+Random Forest classifier (captures non-linear VWAP/TWAP signals), and returns
+out-of-sample AUC to Optuna.
 
 Usage:
+    python3 src_py/optuna_physical_sweep.py \
+        --ticker NVDA --target cls_close --trials 100
 """
 
 import argparse
@@ -26,7 +29,7 @@ import numpy as np
 import pandas as pd
 import optuna
 
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
 from sklearn.exceptions import ConvergenceWarning
@@ -73,6 +76,10 @@ DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
 }
 
+# Targets whose horizon is ≤ 10m.  Since we removed short-horizon targets,
+# this set is now empty.  Keep the structure so older code paths don't break.
+DB_LEAKY_TARGETS = set()
+
 def _time_ordered_train_val_split(df, min_train_months=3):
     months = sorted(df['Month'].unique())
     splits = []
@@ -113,9 +120,9 @@ def get_features(df, target_key):
     return X, feat_available
 
 
-def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
+def objective(trial, ticker, target_key, fixed_hawkes_tag, min_rows_thresh):
     # ── 1. Suggest Physical Parameters ──
-    silence_tag = fixed_silence
+    hawkes_tag = fixed_hawkes_tag
     
     # 0.00001 (0.001%) to 0.005 (0.5%) of 14d trailing ADV
     vol_frac = trial.suggest_float("vol_frac", 0.00001, 0.005, log=True)
@@ -131,8 +138,8 @@ def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
         kappa = trial.suggest_float("kappa", 0.0, 2.0)
         
     # ── 2. Load cached data & ADV ──
-    base_df = df_cache[silence_tag]
-    adv_series = adv_cache[silence_tag]
+    base_df = df_cache[hawkes_tag]
+    adv_series = adv_cache[hawkes_tag]
     
     burst_adv = base_df["Date"].map(adv_series)
     min_vol_per_burst = (vol_frac * burst_adv).reindex(base_df.index)
@@ -172,7 +179,9 @@ def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
     if not splits:
         raise optuna.exceptions.TrialPruned()
         
-    # ── 6. Evaluate logreg_l2 ──
+    # ── 6. Evaluate with RandomForestClassifier ──
+    # Random Forest captures the non-linear VWAP/TWAP "variance == 0" signal
+    # that linear models cannot learn.
     y_true_all = []
     y_pred_all = []
     
@@ -188,16 +197,23 @@ def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
         
         if len(np.unique(y_tr)) < 2:
             continue
-            
-        scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr)
-        X_te_s = scaler.transform(X_te)
+
+        # Replace NaN/Inf in features with 0
+        X_tr = np.nan_to_num(X_tr, nan=0.0, posinf=0.0, neginf=0.0)
+        X_te = np.nan_to_num(X_te, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # RandomForest — non-linear, captures TWAP variance=0 splits natively
+        model = RandomForestClassifier(
+            n_estimators=150,
+            max_depth=10,
+            min_samples_leaf=50,
+            max_features='sqrt',
+            random_state=42,
+            n_jobs=-1,
+        )
+        model.fit(X_tr, y_tr)
         
-        # logreg_l2
-        model = LogisticRegression(penalty='l2', C=1.0, solver='lbfgs', max_iter=200, n_jobs=-1)
-        model.fit(X_tr_s, y_tr)
-        
-        y_pred = model.predict_proba(X_te_s)[:, 1]
+        y_pred = model.predict_proba(X_te)[:, 1]
         
         y_true_all.extend(y_te)
         y_pred_all.extend(y_pred)
@@ -212,6 +228,8 @@ def objective(trial, ticker, target_key, fixed_silence, min_rows_thresh):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", required=True)
+    parser.add_argument("--target", required=True,
+                        help="Target key, e.g. cls_close, cls_clop, cls_clcl")
     parser.add_argument("--trials", type=int, default=100)
     parser.add_argument("--start-date", default="2023-01-01")
     parser.add_argument("--end-date", default="2024-12-31")
@@ -222,16 +240,17 @@ def main():
     print(f"Target: {args.target}")
     print(f"Trials: {args.trials}")
     print(f"Date window: {args.start_date} -> {args.end_date}")
+    print(f"Model: RandomForestClassifier (non-linear VWAP/TWAP capture)")
     print(f"===========================================\n")
 
     start_ts = pd.to_datetime(args.start_date)
     end_ts = pd.to_datetime(args.end_date)
     
-    # Preload from the cluster's silence_sweep_{ticker} caches
-    tags = ["s0p5", "s1p0", "s2p0"]
+    # Preload from the cluster's hawkes_sweep_{ticker} caches (replaces legacy silence_sweep)
+    tags = ["b1p0_i0p3", "b1p0_i0p5", "b1p0_i0p8"]
     for tag in tags:
-        # Expected path derived from run_sweep_*_h2.sh outputs.
-        path = f"results/silence_sweep_{args.ticker}/logreg_l2/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
+        # Expected path derived from rebuild_regular_burst_inputs_h2.sh outputs.
+        path = f"results/hawkes_sweep_{args.ticker}/logreg_l2/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
         
         if not os.path.exists(path):
             print(f"ERROR: Cannot find precomputed cache at {path}")
@@ -240,6 +259,11 @@ def main():
         print(f"Loading {tag} cached data from {path}...")
         df = pd.read_csv(path)
         
+        # Safely fill NaNs in new behavioral columns
+        for col in ('TradeSizeVariance', 'RoundLotPct', 'HawkesPeakIntensity', 'PreBurstCancelRate'):
+            if col in df.columns:
+                df[col] = df[col].fillna(0.0)
+
         df['DateCol'] = pd.to_datetime(df['Date'])
         df = df[(df['DateCol'] >= start_ts) & (df['DateCol'] <= end_ts)].copy()
         if df.empty:
@@ -257,9 +281,8 @@ def main():
         
         print(f" -> {tag} loaded: {len(df):,} total unfiltered bursts.")
         
-    print(f"\nStarting Bayesian Optimization...")
+    print(f"\nStarting Bayesian Optimization with RandomForest evaluator...")
     
-    tags = ["s0p5", "s1p0", "s2p0"]
     outdir = Path(f"results/optuna_physical/{args.ticker}")
     outdir.mkdir(parents=True, exist_ok=True)
     
@@ -274,11 +297,12 @@ def main():
         res = {
             "ticker": args.ticker,
             "target": args.target,
+            "model": "RandomForestClassifier",
             "best_auc": float(study.best_value),
             "best_params": study.best_params
         }
-        # Safely insert the fixed silence tag into the payload for the JSON parser
-        res["best_params"]["silence_tag"] = tag
+        # Safely insert the fixed hawkes tag into the payload for the JSON parser
+        res["best_params"]["hawkes_tag"] = tag
         
         out_file = outdir / f"best_physical_params_{args.target}_{tag}.json"
         with open(out_file, "w") as f:
@@ -288,7 +312,7 @@ def main():
         for k, v in study.best_params.items():
             print(f"  {k}: {v}")
             
-    print(f"\nOptimization Complete for {args.ticker} -> {args.target} over all silence bounds!")
+    print(f"\nOptimization Complete for {args.ticker} -> {args.target} over all hawkes bounds!")
 
 if __name__ == "__main__":
     main()

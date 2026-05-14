@@ -56,10 +56,22 @@ EXTENDED_FEATURE_COLS = BASE_FEATURE_COLS + [
     'NetRecentFlow', 'BurstDensity5m',
     'TimeOfDaySin', 'TimeOfDayCos', 'IsOpen15', 'IsClose15', 'HourOfDay',
     'PriceLevel', 'VolPerDollar',
+    # ── Path 1: VWAP/TWAP Fingerprinting ──
+    'TradeSizeVariance', 'RoundLotPct', 'LogTradeSizeVariance',
+    # ── Path 2: Hawkes Process ──
+    'HawkesPeakIntensity', 'LogHawkesIntensity',
+    # ── Path 3: Pre-Burst Quote Depletion ──
+    'PreBurstCancelRate',
+    # ── Cross-path interactions ──
+    'Variance_x_Volume', 'CancelRate_x_Impact', 'Hawkes_x_Volume',
 ]
 DB_TAINTED_FEATURES = {
     'D_b', 'Dir_x_Db', 'Impact_x_Db', 'AvgSize_x_Db', 'DbSquared', 'Db_qrank',
 }
+
+# Targets whose horizon is ≤ 10m.  Short-horizon targets have been removed,
+# so this set is empty.  Kept for structural compatibility.
+DB_LEAKY_TARGETS = set()
 
 def get_features(df, target_key):
     feat_cols = list(EXTENDED_FEATURE_COLS)
@@ -111,13 +123,15 @@ warnings.filterwarnings("ignore")
 def main():
     parser = argparse.ArgumentParser(description="Online SGD PnL Backtester")
     parser.add_argument("--data", required=True, help="Path to raw, unfiltered bursts CSV (e.g., nvda_raw_bursts.csv)")
+    parser.add_argument("--target", required=True,
+                        help="Target key, e.g. reg_clop, reg_clcl, reg_close")
     parser.add_argument("--start-date", default="2023-01-01",
                         help="Inclusive start date for burst rows (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="2024-12-31",
                         help="Inclusive end date for burst rows (YYYY-MM-DD)")
     
     # Grand Universal Filters
-    parser.add_argument("--silence-tag", default="s2p0")
+    parser.add_argument("--hawkes-tag", default="b1p0_i0p5")
     parser.add_argument("--vol-frac", type=float, default=0.0027)
     parser.add_argument("--dir-thresh", type=float, default=0.68)
     parser.add_argument("--vol-ratio", type=float, default=0.36)
@@ -183,7 +197,7 @@ def main():
     print(f"Data:    {args.data}")
     print(f"Target:  {args.target}")
     print(f"Dates:   {args.start_date} -> {args.end_date}")
-    print(f"Filters: {args.silence_tag}, vf={args.vol_frac}, d={args.dir_thresh}, r={args.vol_ratio}\n")
+    print(f"Filters: {args.hawkes_tag}, vf={args.vol_frac}, d={args.dir_thresh}, r={args.vol_ratio}\n")
 
     # 1. LOAD DATA 
     if not os.path.exists(args.data):
