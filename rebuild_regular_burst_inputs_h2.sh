@@ -112,7 +112,7 @@ build_baseline_for_ticker() {
 build_shared_cache_for_ticker() {
   local ticker="$1"
   local stock_dir="${ROOT}/data/${ticker}"
-  local precompute_dir="results/hawkes_sweep_${ticker}/logreg_l2/shared_cache"
+  local precompute_dir="results/${ticker}_params"
 
   if [ ! -d "${stock_dir}" ]; then
     echo "WARN: Missing ${stock_dir}; skipping shared_cache for ${ticker}"

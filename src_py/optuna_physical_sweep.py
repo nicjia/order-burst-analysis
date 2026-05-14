@@ -249,7 +249,7 @@ def main():
     # Preload caches
     tags = ["b1p0_i0p3", "b1p0_i0p5", "b1p0_i0p8"]
     for tag in tags:
-        path = f"results/{args.ticker}_params/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
+        path = f"results/{args.ticker}_params/bursts_{args.ticker}_{tag}_filtered.csv"
         
         if not os.path.exists(path):
             print(f"ERROR: Cannot find precomputed cache at {path}")
