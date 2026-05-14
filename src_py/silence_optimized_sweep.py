@@ -156,6 +156,7 @@ def main():
 
     ap.add_argument("--model", default="logreg_l2", help="train_model_zoo --model")
     ap.add_argument("--target", default="cls_close",
+                     help="Comma-separated target list, e.g. cls_close,cls_clop")
     ap.add_argument("--features", default="extended", choices=["base", "extended"])
     ap.add_argument("--min-train-months", type=int, default=3)
     ap.add_argument("--require-directional", action="store_true", help="Drop mixed bursts after post-classification")
@@ -175,6 +176,8 @@ def main():
     if not use_frac_vol and args.min_vol_values is None:
         raise ValueError("Provide either --min-vol-values or --vol-frac-values.")
 
+    # Short-horizon targets have been removed from the pipeline.
+    short_targets = set()
     long_targets = {"cls_close", "cls_clop", "cls_clcl", "reg_close", "reg_clop", "reg_clcl"}
     has_short_horizon_target = any(t in short_targets for t in target_list)
     has_long_horizon_target = any(t in long_targets for t in target_list)

@@ -1448,8 +1448,11 @@ def get_target_list(target_arg):
     elif target_arg == 'all_reg':
         return [k for k, v in TARGET_MAP.items() if v[1] == 'regression']
     elif target_arg == 'all_horizons':
+        # Short-horizon targets removed; same as 'long' now
+        return ['cls_close', 'cls_clop', 'cls_clcl']
     elif target_arg == 'short':
-        # Intraday horizons — run on UNFILTERED data only
+        # Short-horizon targets have been removed from the pipeline
+        return ['cls_close', 'cls_clop', 'cls_clcl']
     elif target_arg == 'long':
         # End-of-day / next-day — valid on filtered data
         return ['cls_close', 'cls_clop', 'cls_clcl']
@@ -1467,6 +1470,7 @@ def main():
              'or comma-separated keys (e.g. lgb,xgb,rf)')
     ap.add_argument('--target', default='cls_close',
         help='Target(s): all, all_cls, all_reg, all_horizons, '
+             'short, long, or comma-separated keys (e.g. cls_close,cls_clop)')
     ap.add_argument('--features', default='extended',
         choices=['base', 'extended'],
         help='Feature set to use (default: extended)')

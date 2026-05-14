@@ -209,9 +209,6 @@ main() {
     --position-mode fraction \
     --position-size-mult 1.0 \
     --shares-per-trade 1.0 \
-    --spread-col Spread \
-    --spread-multiplier 0.5 \
-    --spread-exit-multiplier 0.5 \
     --daily-open-csv open_all.csv \
     --daily-close-csv close_all.csv \
     --debug-trades-out "${out_prefix}_debug_trades.csv" \

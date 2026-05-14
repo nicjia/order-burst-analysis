@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--exit-ask-col", default="EndAsk",
                         help="Ask column used for quote-based burst_stream exit")
     parser.add_argument("--horizon-minutes", type=float, default=None,
+                        help="Override holding period in minutes for burst_stream mode")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
     parser.add_argument("--position-mode", choices=["fraction", "shares"], default="fraction",
@@ -242,24 +243,12 @@ def main():
         print("ERROR: Strict universal filters eliminated 100% of the dataset!")
         sys.exit(1)
 
-    use_spread_cost = args.spread_col in filtered.columns
-    inferred_exit_col = infer_exit_spread_col(args.target)
-    exit_spread_col = args.spread_exit_col.strip() if args.spread_exit_col.strip() else inferred_exit_col
-    use_exit_spread_col = bool(exit_spread_col) and (exit_spread_col in filtered.columns)
-
-    if use_spread_cost:
-        if use_exit_spread_col:
-            print(
-                f"Execution model: round-trip spread-aware using entry='{args.spread_col}' and exit='{exit_spread_col}' "
-                f"(mult={args.spread_multiplier}+{args.spread_exit_multiplier})"
-            )
-        else:
-            print(
-                f"Execution model: round-trip spread-aware using entry='{args.spread_col}' and exit~entry fallback "
-                f"(mult={args.spread_multiplier}+{args.spread_exit_multiplier})"
-            )
+    # Determine BBO-based execution model
+    has_bbo = (args.entry_bid_col in filtered.columns and args.entry_ask_col in filtered.columns)
+    if has_bbo:
+        print(f"Execution model: BBO crossing (entry/exit via {args.entry_bid_col}/{args.entry_ask_col})")
     else:
-        print(f"Execution model: no spread cost (column '{args.spread_col}' not found)")
+        print(f"Execution model: mid-price proxy (BBO columns not available)")
     if args.position_mode == "shares":
         print(f"Position sizing: fixed shares per trade = {args.shares_per_trade}")
     else:
@@ -483,12 +472,10 @@ def main():
         entry_ask_day = day_df[args.entry_ask_col].to_numpy(dtype=float) if stream_quote_mode else None
         exit_bid_day = day_df[args.exit_bid_col].to_numpy(dtype=float) if stream_quote_mode else None
         exit_ask_day = day_df[args.exit_ask_col].to_numpy(dtype=float) if stream_quote_mode else None
-        spread_entry_day = filtered.loc[day_mask, args.spread_col].to_numpy(dtype=float) if use_spread_cost else None
-        spread_exit_day = (
-            filtered.loc[day_mask, exit_spread_col].to_numpy(dtype=float)
-            if use_spread_cost and use_exit_spread_col
-            else spread_entry_day
-        )
+        # Spread costs are now implicit in BBO crossing — disable synthetic spread path
+        use_spread_cost = False
+        spread_entry_day = None
+        spread_exit_day = None
         
         # 1. Transform strictly off yesterday's scaler weights (No Peeking at today!)
         X_day_s = scaler.transform(X_day)
@@ -704,13 +691,12 @@ def main():
                     elif pred < current_short_thresh:
                         side = -dir_i
                 elif args.signal_mode == "cost_aware":
-                    # Cost-aware trigger: use predicted per-share move...
-                    spread_entry_val = max(0.0, float(spread_entry_day[i])) if use_spread_cost else 0.0
-                    spread_exit_val = max(0.0, float(spread_exit_day[i])) if use_spread_cost else 0.0
-                    per_share_cost = (
-                        args.spread_multiplier * spread_entry_val
-                        + args.spread_exit_multiplier * spread_exit_val
-                    )
+                    # Cost-aware trigger: use actual BBO spread from data
+                    if has_bbo:
+                        bbo_spread = max(0.0, float(entry_ask_day[i]) - float(entry_bid_day[i]))
+                    else:
+                        bbo_spread = 0.0
+                    per_share_cost = bbo_spread  # full round-trip crossing cost
                     gate = args.cost_buffer_mult * per_share_cost
 
                     if pred_move_per_share > gate:

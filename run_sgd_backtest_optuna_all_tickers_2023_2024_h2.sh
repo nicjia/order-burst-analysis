@@ -169,8 +169,8 @@ PY
 run_one_ticker() {
   local ticker="$1"
   local cls_key
-  # FORCE the use of permissive 10-minute physical parameters to avoid starving the overnight model
-  cls_key="cls_10m"
+  # Use cls_key matching the backtest target (e.g., reg_clop -> cls_clop)
+  cls_key=$(cls_key_for_target "${TARGET_TO_RUN}")
   
   local data_path
   printf -v data_path "${DATA_TEMPLATE}" "${ticker}"
@@ -217,9 +217,6 @@ run_one_ticker() {
     --position-mode fraction \
     --position-size-mult 1.0 \
     --shares-per-trade 1.0 \
-    --spread-col Spread \
-    --spread-multiplier 0.5 \
-    --spread-exit-multiplier 0.5 \
     --daily-open-csv open_all.csv \
     --daily-close-csv close_all.csv \
     --debug-trades-out "${out_prefix}_debug_trades.csv" \
