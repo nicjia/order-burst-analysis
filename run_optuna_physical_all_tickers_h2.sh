@@ -25,7 +25,7 @@ echo "========== OPTUNA PHYSICAL PARAMETER SEARCH =========="
 echo "Targets: ${TARGETS[*]}"
 echo "Trials: ${TRIALS}"
 echo "Date window: ${START_DATE} -> ${END_DATE}"
-echo "Cache dir: results/hawkes_sweep_<TICKER>/logreg_l2/shared_cache/"
+echo "Cache dir: results/<TICKER>_params/shared_cache/"
 echo "======================================================"
 
 if [ -n "${SGE_TASK_ID:-}" ] && [ "${SGE_TASK_ID}" != "undefined" ]; then

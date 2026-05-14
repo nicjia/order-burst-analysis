@@ -246,11 +246,10 @@ def main():
     start_ts = pd.to_datetime(args.start_date)
     end_ts = pd.to_datetime(args.end_date)
     
-    # Preload from the cluster's hawkes_sweep_{ticker} caches (replaces legacy silence_sweep)
+    # Preload caches
     tags = ["b1p0_i0p3", "b1p0_i0p5", "b1p0_i0p8"]
     for tag in tags:
-        # Expected path derived from rebuild_regular_burst_inputs_h2.sh outputs.
-        path = f"results/hawkes_sweep_{args.ticker}/logreg_l2/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
+        path = f"results/{args.ticker}_params/shared_cache/bursts_{args.ticker}_{tag}_filtered.csv"
         
         if not os.path.exists(path):
             print(f"ERROR: Cannot find precomputed cache at {path}")
