@@ -1,11 +1,13 @@
 #!/bin/bash
+#$ -cwd
+#$ -j y
+#$ -o logs/patch_missing_cache_$JOB_ID.out
+#$ -l h_data=4G,h_rt=04:00:00
+#$ -pe shared 4
 #
 # patch_missing_cache_files.sh
 #
 # Targeted repair script for missing shared_cache files.
-# Run this directly on the cluster (no qsub needed — it's fast enough):
-#
-#   bash patch_missing_cache_files.sh
 #
 # What it does:
 #   NVDA b1p0_i0p5 : raw exists → only runs compute_permanence.py
