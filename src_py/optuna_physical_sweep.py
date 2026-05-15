@@ -256,7 +256,13 @@ def main():
             sys.exit(1)
             
         print(f"Loading {tag} cached data from {path}...")
-        df = pd.read_csv(path)
+        
+        # Read columns first to build dtype dict to prevent OOM DURING read_csv
+        cols = pd.read_csv(path, nrows=0).columns
+        float_cols = [c for c in cols if c not in ('Date', 'Time', 'Ticker')]
+        dtypes = {c: 'float32' for c in float_cols}
+        
+        df = pd.read_csv(path, dtype=dtypes)
         
         # Safely fill NaNs in new behavioral columns
         for col in ('TradeSizeVariance', 'RoundLotPct', 'HawkesPeakIntensity', 'PreBurstCancelRate'):

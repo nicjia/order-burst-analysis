@@ -2,7 +2,7 @@
 #$ -cwd
 #$ -j y
 #$ -o logs/optuna_physical_$JOB_ID_$TASK_ID.out
-#$ -l h_data=4G,h_rt=02:59:00
+#$ -l h_data=8G,h_rt=06:59:00
 #$ -pe shared 4
 
 ROOT=/u/scratch/n/nicjia/order-burst-analysis
