@@ -270,7 +270,15 @@ def main():
                 df[col] = df[col].fillna(0.0)
 
         df['DateCol'] = pd.to_datetime(df['Date'])
-        df = df[(df['DateCol'] >= start_ts) & (df['DateCol'] <= end_ts)].copy()
+        mask = (df['DateCol'] >= start_ts) & (df['DateCol'] <= end_ts)
+        df_filtered = df.loc[mask].copy()
+        
+        # Explicitly delete old un-filtered dataframe to prevent memory spike
+        del df
+        import gc
+        gc.collect()
+        
+        df = df_filtered
         if df.empty:
             print(
                 f"ERROR: No rows left after date filter for {tag} "
