@@ -212,8 +212,8 @@ run_one_ticker() {
     --start-date "${START_DATE}" \
     --end-date "${END_DATE}" \
     --ticker "${ticker}" \
-    --execution-mode burst_stream \
-    --signal-mode cost_aware \
+    --execution-mode phase3_flow \
+    --signal-mode percentile \
     --position-mode fraction \
     --position-size-mult 1.0 \
     --shares-per-trade 1.0 \
