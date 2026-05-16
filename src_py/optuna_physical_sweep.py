@@ -84,22 +84,21 @@ def _time_ordered_train_val_split(df, min_train_months=3):
     months = sorted(df['Month'].unique())
     splits = []
     
-    # Needs a minimum number of months to even split
-    if len(months) < min_train_months + 1:
+    if len(months) < 4:
         return splits
         
-    for i in range(min_train_months, len(months)):
-        train_months = months[:i]
-        test_month = months[i]
+    # OPTIMIZATION: Do a single 70/30 time split instead of 21 walk-forward folds
+    # This provides a 21x speedup for the Optuna sweep.
+    split_idx = int(len(months) * 0.7)
+    train_months = months[:split_idx]
+    test_months = months[split_idx:]
+    
+    train_mask = df['Month'].isin(train_months)
+    test_mask = df['Month'].isin(test_months)
+    
+    if train_mask.sum() >= 50 and test_mask.sum() >= 5:
+        splits.append(("70_30_split", train_mask, test_mask))
         
-        train_mask = df['Month'].isin(train_months)
-        test_mask = df['Month'] == test_month
-        
-        # Require absolute minimum counts
-        if train_mask.sum() < 50 or test_mask.sum() < 5:
-            continue
-            
-        splits.append((test_month, train_mask, test_mask))
     return splits
 
 
@@ -202,14 +201,13 @@ def objective(trial, ticker, target_key, fixed_hawkes_tag, min_rows_thresh):
         X_tr = np.nan_to_num(X_tr, nan=0.0, posinf=0.0, neginf=0.0)
         X_te = np.nan_to_num(X_te, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # RandomForest — non-linear, captures TWAP variance=0 splits natively
-        model = RandomForestClassifier(
-            n_estimators=150,
-            max_depth=10,
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        # HistGradientBoosting — extremely fast non-linear tree ensemble
+        model = HistGradientBoostingClassifier(
+            max_iter=50,
+            max_depth=5,
             min_samples_leaf=50,
-            max_features='sqrt',
             random_state=42,
-            n_jobs=-1,
         )
         model.fit(X_tr, y_tr)
         
@@ -240,7 +238,7 @@ def main():
     print(f"Target: {args.target}")
     print(f"Trials: {args.trials}")
     print(f"Date window: {args.start_date} -> {args.end_date}")
-    print(f"Model: RandomForestClassifier (non-linear VWAP/TWAP capture)")
+    print(f"Model: HistGradientBoostingClassifier (fast non-linear evaluator)")
     print(f"===========================================\n")
 
     start_ts = pd.to_datetime(args.start_date)
