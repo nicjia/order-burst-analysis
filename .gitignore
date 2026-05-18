@@ -65,7 +65,7 @@ close_all.csv
 OPCL_all.csv
 pvCLCL_all.csv
 open_all.csv
-results/
+results/*
 comp.py
 reg_analysis.py
 *.png
@@ -76,3 +76,4 @@ data_processor
 t.py
 cookies.txt
 main.tex
+!results/research_report_data.md
