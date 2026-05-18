@@ -86,3 +86,15 @@ To simulate a trading strategy without temporal leakage, the script establishes 
 - **run_model_zoo_two_phase_h2.sh:** Two-phase model-zoo array (short/long horizon).
 - **run_sgd_backtest_optuna_all_tickers_2023_2024_h2.sh:** Backtest selected target on all 4 tickers using Optuna physical params.
 - **run_sgd_backtest_optuna_nvda_archive_2019_2022_h2.sh:** NVDA archive backtest runner (auto-builds archive permanence dataset if missing).
+- **run_optuna_regression_sweep.sh:** Background execution script to run `optuna_regression_sweep.py` across core tickers (Option B).
+- **run_sgd_backtest_optuna_regression_all_tickers_2023_2024_h2.sh:** Backtest using the *Regression-based* Optuna parameters to solve the AUC-PnL mismatch (Option B execution).
+- **run_sgd_backtest_oos.sh:** Execution shell script that tests Out-Of-Sample (OOS) tickers (AAPL, LLY, SPY) using mean structural parameters over the 2019-2021 timeframe.
+
+### Recent Architectural Additions (Option A vs. Option B)
+1. **`online_sgd_backtest.py` (Added Option A and Option B support):**
+   - We updated this script to include `--phase3-flow-col pred_weighted` (Option A), which weighted trades by their magnitude. However, this empirically resulted in a long-only structural collapse because negative components were stripped via zero-clipping threshold filters.
+   - We then adopted **Option B** (Regression Matching). By aligning Optuna optimizations strictly with an `SGDRegressor` rather than a standard tree-based classifier, the model correctly utilized the continuous values of the `Volume-Scaled Impact` to predict negative return gaps, recovering short-side edge.
+2. **`optuna_regression_sweep.py`:**
+   - Instead of classifying directional edge (`AUC`), this script measures Spearman rank correlation against `reg_clop` directly. Crucially, it scales its scoring metric by an `n_test` confidence boundary to explicitly prevent "sparsity exploitation" where the optimizer arbitrarily drops 99% of data just to perfectly fit 5 bursts.
+3. **`results/research_report_data.md`**:
+   - We deprecated the scattered individual `.md` markdown results (Optuna physical, fixed AUM backtests, translation cost sensitivity) and aggressively consolidated them into this unified single master file. This represents all legacy Optuna data, Option A failures, Option B successes (including excess alpha), limitations, and Out-of-Sample proof-of-concepts all rigorously formatted for your paper formulation.

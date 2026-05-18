@@ -190,7 +190,7 @@ run_one_ticker() {
   local vol_ratio="${P[3]}"
   local kappa="${P[4]}"
 
-  local out_prefix="results/sgd_backtests_optuna_2023_2024/${ticker}_${TARGET_TO_RUN}_${use_hawkes_tag}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
+  local out_prefix="results/sgd_backtests_fixed_aum_2023_2024/${ticker}_${TARGET_TO_RUN}_${use_hawkes_tag}_vf${vol_frac}_d${dir_thresh}_r${vol_ratio}_k${kappa}"
 
   echo "================================================"
   echo "Ticker: ${ticker}"
@@ -213,10 +213,10 @@ run_one_ticker() {
     --end-date "${END_DATE}" \
     --ticker "${ticker}" \
     --execution-mode phase3_flow \
-    --signal-mode percentile \
-    --position-mode fraction \
-    --position-size-mult 1.0 \
-    --shares-per-trade 1.0 \
+    --signal-mode direction \
+    --position-mode fixed_aum \
+    --fixed-aum 10000000 \
+    --round-trip-bps-cost 1.0 \
     --daily-open-csv open_all.csv \
     --daily-close-csv close_all.csv \
     --debug-trades-out "${out_prefix}_debug_trades.csv" \

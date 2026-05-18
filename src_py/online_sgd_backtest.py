@@ -164,8 +164,8 @@ def main():
                         help="Override holding period in minutes for burst_stream mode")
     parser.add_argument("--position-size-mult", type=float, default=1.0,
                         help="Fraction of BurstVolume traded per signal (1.0 = full burst volume)")
-    parser.add_argument("--position-mode", choices=["fraction", "shares"], default="fraction",
-                        help="Position sizing: fraction of burst volume or fixed shares per trade")
+    parser.add_argument("--position-mode", choices=["fraction", "shares", "fixed_aum"], default="fraction",
+                        help="Position sizing: fraction of burst volume, fixed shares per trade, or fixed_aum")
     parser.add_argument("--shares-per-trade", type=float, default=1.0,
                         help="Fixed shares per trade when --position-mode=shares")
     parser.add_argument("--pnl-space", choices=["raw", "transformed"], default="raw",
@@ -186,10 +186,14 @@ def main():
                         help="Informational-burst threshold theta on predicted permanence for phase3_flow")
     parser.add_argument("--phase3-min-lag-minutes", type=float, default=10.0,
                         help="Minimum lag after burst before eligibility in phase3_flow")
-    parser.add_argument("--phase3-flow-col", choices=["signed_volume", "volume"], default="signed_volume",
-                        help="Flow aggregation component Q_b for phase3_flow")
+    parser.add_argument("--phase3-flow-col", choices=["signed_volume", "volume", "pred_weighted"], default="signed_volume",
+                        help="Flow aggregation component Q_b for phase3_flow (pred_weighted uses prediction magnitude)")
     parser.add_argument("--phase3-percentile", type=float, default=90.0,
                         help="Dynamic rolling percentile for informational threshold")
+    parser.add_argument("--round-trip-bps-cost", type=float, default=1.0,
+                        help="Round trip transaction cost in basis points for Phase3 MOC/MOO execution (default 1.0 bps)")
+    parser.add_argument("--fixed-aum", type=float, default=10000.0,
+                        help="Fixed capital base deployed per trade (e.g. 10000 dollars) for calculating realistic % returns")
     
     args = parser.parse_args()
 
@@ -396,6 +400,8 @@ def main():
     # ── THE CORE ENGINE ──
     cum_pnl_tracker = 0.0
     cum_pnl_raw_tracker = 0.0
+    max_drawdown = 0.0
+    peak_cum_pnl = 0.0
     open_trades = collections.deque()
     hold_delta = None
     if args.execution_mode == "burst_stream" and not close_style_target:
@@ -492,29 +498,39 @@ def main():
 
         # 4. Trigger simulated entries
         if args.execution_mode == "phase3_flow":
-            # Phase III: classify informational bursts dynamically using rolling history
-            if len(recent_predictions) > 100:
-                dynamic_thresh_long = np.percentile(recent_predictions, args.phase3_percentile)
-                dynamic_thresh_short = np.percentile(recent_predictions, 100.0 - args.phase3_percentile)
-                gate = float(dynamic_thresh_long) # Use long threshold for logging
-            else:
-                # Fallback for the first few days before the queue fills up
-                dynamic_thresh_long = args.phase3_thresh 
-                dynamic_thresh_short = -args.phase3_thresh
+            if args.signal_mode == "direction":
+                # Strict zero-threshold or fixed cost threshold (no rolling/leaky percentiles)
                 gate = float(args.phase3_thresh)
+                informational_long = preds > gate
+                # We do not blindly flip direction for anti-bursts unless explicitly built into a strategy.
+                informational_short = np.zeros_like(preds, dtype=bool)
+            else:
+                # Phase III: classify informational bursts dynamically using rolling history
+                if len(recent_predictions) > 100:
+                    dynamic_thresh_long = np.percentile(recent_predictions, args.phase3_percentile)
+                    dynamic_thresh_short = np.percentile(recent_predictions, 100.0 - args.phase3_percentile)
+                    gate = float(dynamic_thresh_long)
+                else:
+                    dynamic_thresh_long = args.phase3_thresh 
+                    dynamic_thresh_short = -args.phase3_thresh
+                    gate = float(args.phase3_thresh)
 
-            # Check both the top tail (long) and bottom tail (short)
-            informational_long = preds > dynamic_thresh_long
-            informational_short = preds < dynamic_thresh_short
+                informational_long = preds > dynamic_thresh_long
+                informational_short = preds < dynamic_thresh_short
+
             informational = informational_long | informational_short
             
             lag_eligible = (day_end_ts - event_ts_day) >= phase3_lag_delta
             selected = informational & lag_eligible
-            q_component = vol_day.copy()
-            
-            if args.phase3_flow_col == "signed_volume" and "Direction" in day_df.columns:
-                dir_day = day_df["Direction"].to_numpy(dtype=float)
-                q_component = q_component * dir_day
+            if args.phase3_flow_col == "pred_weighted":
+                # Magnitude-weighted: use predicted permanence as the signal weight.
+                # Bursts with high predicted VSI contribute proportionally more.
+                q_component = preds.copy()
+            else:
+                q_component = vol_day.copy()
+                if args.phase3_flow_col == "signed_volume" and "Direction" in day_df.columns:
+                    dir_day = day_df["Direction"].to_numpy(dtype=float)
+                    q_component = q_component * dir_day
                 
             flow_signal = float(np.nansum(q_component[selected])) if np.any(selected) else 0.0
 
@@ -567,9 +583,14 @@ def main():
                                 exit_px = np.nan
 
                         if not np.isnan(exit_px):
-                            qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * max(abs(flow_signal), 0.0))
+                            if args.position_mode == "fixed_aum":
+                                qty = args.fixed_aum / entry_px
+                            else:
+                                qty = args.shares_per_trade if args.position_mode == "shares" else (args.position_size_mult * max(abs(flow_signal), 0.0))
+                            
                             gross_edge_raw = side * qty * (exit_px - entry_px)
-                            spread_cost_raw = 0.0
+                            # BPS cost calculated on the total nominal exposure
+                            spread_cost_raw = (args.round_trip_bps_cost / 10000.0) * qty * entry_px
                             net_edge_raw = gross_edge_raw - spread_cost_raw
                             gross_edge = gross_edge_raw if args.pnl_space == "raw" else np.arcsinh(gross_edge_raw)
                             cost_edge = spread_cost_raw if args.pnl_space == "raw" else np.arcsinh(spread_cost_raw)
@@ -833,6 +854,14 @@ def main():
                 recent_predictions.append(pred)
             
         daily_pnls.append(day_pnl)
+        
+        # Track Max Drawdown
+        current_cum_pnl = cum_pnl_raw_tracker
+        if current_cum_pnl > peak_cum_pnl:
+            peak_cum_pnl = current_cum_pnl
+        drawdown = peak_cum_pnl - current_cum_pnl
+        if drawdown > max_drawdown:
+            max_drawdown = drawdown
         cum_pnl_raw_tracker += day_pnl_raw
         cum_pnl_tracker += day_pnl
         
@@ -891,6 +920,10 @@ def main():
     print(f"  Total Spread Cost (raw):      {total_spread_cost_raw:.4f}")
     print(f"\n  Cumulative Simulated PnL ({args.pnl_space}): {cum_pnl:.4f}")
     print(f"  Cumulative Sim PnL (raw):     {cum_pnl_raw_tracker:.4f}")
+    if args.position_mode == "fixed_aum":
+        roc = (cum_pnl_raw_tracker / args.fixed_aum) * 100.0
+        print(f"  Return on Capital (ROC):      {roc:.2f}%")
+    print(f"  Max Drawdown (raw):           {max_drawdown:.4f}")
     print(f"  Daily Mean PnL ({args.pnl_space}):         {mean_daily_pnl:.5f}")
     print(f"  Daily StdDev ({args.pnl_space}):           {std_daily_pnl:.5f}")
     print(f"  Annualized Sharpe Ratio:      {sharpe_ratio:.2f}")
