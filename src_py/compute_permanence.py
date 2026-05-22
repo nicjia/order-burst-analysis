@@ -163,7 +163,7 @@ def main():
                 if np.any(m):
                     td = target_arr[m].astype(np.int64)
                     ii = np.searchsorted(op_days, td, side='left')
-                    ok = ii < len(op_days)
+                    ok = (ii < len(op_days)) & (op_days[ii] == td)
                     if np.any(ok):
                         ridx = np.where(m)[0][ok]
                         bursts.loc[ridx, 'CRSP_OP'] = op_vals[ii[ok]]
@@ -179,17 +179,17 @@ def main():
                 if np.any(m):
                     td = target_arr[m].astype(np.int64)
                     ii = np.searchsorted(cl_days, td, side='left')
-                    ok = ii < len(cl_days)
+                    ok = (ii < len(cl_days)) & (cl_days[ii] == td)
                     if np.any(ok):
                         ridx = np.where(m)[0][ok]
                         bursts.loc[ridx, 'CRSP_CL'] = cl_vals[ii[ok]]
                         bursts.loc[ridx, 'CRSP_CL_day'] = cl_days[ii[ok]]
 
     # CLOP: x = open price of next trading day
-    bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - entry_price).astype('float64'))
+    bursts['Perm_CLOP'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_OP'] - bursts['CloseMid']).astype('float64'))
 
     # CLCL: x = close price of next trading day
-    bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - entry_price).astype('float64'))
+    bursts['Perm_CLCL'] = np.arcsinh(bursts['BurstVolume'] * bursts['Direction'] * (bursts['CRSP_CL'] - bursts['CloseMid']).astype('float64'))
 
     # Coverage diagnostics for overnight horizons
     clop_valid = bursts['Perm_CLOP'].notna().sum()

@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+passive_oos_eval.py  —  Out-of-Sample evaluation of passive burst model.
+
+Usage (consensus params):
+    python3 passive/src_py/passive_oos_eval.py --ticker TSLA --use-consensus
+    python3 passive/src_py/passive_oos_eval.py --ticker LLY  --use-consensus
+
+Usage (custom params):
+    python3 passive/src_py/passive_oos_eval.py --ticker TSLA \
+        --vol-frac 0.000681 --dir-thresh 0.641 --vol-ratio 0.376 --max-cancel 0.729
+"""
+
+import argparse
+import sys
+import os
+import json
+import warnings
+import numpy as np
+import pandas as pd
+from scipy.stats import spearmanr
+from sklearn.linear_model import SGDRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import ConvergenceWarning
+
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# ── Consensus Optuna params (average of NVDA/JPM/MS) ────────
+CONSENSUS_PARAMS = {
+    'vol_frac':          0.000681,
+    'dir_thresh':        0.6408,
+    'vol_ratio':         0.3759,
+    'max_cancel_ratio':  0.7294,
+}
+
+PASSIVE_FEATURE_COLS = [
+    'Volume', 'SubmissionCount', 'BidSubCount', 'AskSubCount',
+    'BidSubVolume', 'AskSubVolume', 'BidRatio', 'AskRatio', 'MinMaxVolRatio',
+    'PeakImpact', 'Spread', 'BidVolBest', 'AskVolBest',
+    'BidDepth5', 'AskDepth5', 'BookImbalance', 'Volatility60s',
+    'Momentum5s', 'Momentum30s', 'Momentum60s', 'TradeCount5m', 'TradeVolume5m',
+    'SubmissionSizeVariance', 'RoundLotPct', 'HawkesPeakIntensity',
+    'CancelCount', 'CancelVolume', 'BidCancelCount', 'AskCancelCount',
+    'BidCancelVolume', 'AskCancelVolume', 'CancelRatio', 'PreBurstCancelRate',
+]
+TARGET_MAP = {'reg_clop': 'Perm_CLOP', 'reg_clcl': 'Perm_CLCL', 'reg_close': 'Perm_tCLOSE'}
+
+def load_data(ticker):
+    path = f"results/passive/passive_bursts_{ticker}_raw_filtered.csv"
+    if not os.path.exists(path):
+        print(f"ERROR: {path} does not exist. Run passive detection first.")
+        sys.exit(1)
+        
+    cols = pd.read_csv(path, nrows=0).columns
+    float_cols = [c for c in cols if c not in ('Date', 'Time', 'Ticker')]
+    dtype_dict = {c: 'float32' for c in float_cols}
+    
+    df = pd.read_csv(path, dtype=dtype_dict, low_memory=True)
+    df['Date'] = df['Date'].astype(str).str.replace('-', '').astype(int)
+    return df
+
+def compute_trailing_adv(df, window=14):
+    daily_vol = df.groupby('Date')['Volume'].sum()
+    return daily_vol.rolling(window=window, min_periods=1).mean()
+
+def apply_filters(df, params, adv_series):
+    burst_adv = df["Date"].map(adv_series)
+    min_vol = params['vol_frac'] * burst_adv
+    mask = df['Volume'] >= min_vol
+    dir_mask = (df['BidRatio'] >= params['dir_thresh']) | (df['AskRatio'] >= params['dir_thresh'])
+    mask = mask & dir_mask
+    mask = mask & (df['MinMaxVolRatio'] <= params['vol_ratio'])
+    if 'CancelRatio' in df.columns:
+        mask = mask & (df['CancelRatio'] <= params['max_cancel_ratio'])
+    return df[mask].copy()
+
+def get_features(df):
+    cols = [c for c in PASSIVE_FEATURE_COLS if c in df.columns]
+    X = df[cols].fillna(0).values
+    return X, cols
+
+def walk_forward_sgd(df, target_col, verbose=True):
+    df = df.copy()
+    df['Month'] = pd.to_datetime(df['Date'].astype(str)).dt.to_period('M')
+    months = sorted(df['Month'].unique())
+
+    if len(months) < 3:
+        print(f"  Only {len(months)} months available — cannot walk-forward. Skipping.")
+        return None, []
+
+    all_y_te, all_pred, all_months_te = [], [], []
+    for i in range(2, len(months)):
+        train_df = df[df['Month'].isin(months[:i])]
+        test_df  = df[df['Month'] == months[i]]
+
+        if len(train_df) < 30 or len(test_df) < 5:
+            continue
+
+        y_tr = train_df[target_col].fillna(0).values
+        y_te = test_df[target_col].fillna(0).values
+        X_tr, _ = get_features(train_df)
+        X_te, _ = get_features(test_df)
+
+        X_tr = np.nan_to_num(X_tr, nan=0, posinf=0, neginf=0)
+        X_te = np.nan_to_num(X_te, nan=0, posinf=0, neginf=0)
+
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(X_tr)
+        X_te = scaler.transform(X_te)
+
+        model = SGDRegressor(loss='huber', epsilon=1.35, penalty='l2', alpha=0.001,
+                             learning_rate='adaptive', eta0=0.001, max_iter=1000, random_state=42)
+        model.fit(X_tr, y_tr)
+        pred = model.predict(X_te)
+        all_y_te.extend(y_te)
+        all_pred.extend(pred)
+        all_months_te.extend([months[i]] * len(y_te))
+
+    if len(all_y_te) < 10:
+        print("  Insufficient predictions — model could not be evaluated.")
+        return None, []
+
+    return np.array(all_y_te), np.array(all_pred)
+
+def evaluate(y_te, y_pred, df_eval, target_col):
+    rho, pval = spearmanr(y_te, y_pred)
+
+    # Quartile-gated backtest
+    p25 = np.percentile(y_pred, 25)
+    p75 = np.percentile(y_pred, 75)
+    gate_mask = (y_pred <= p25) | (y_pred >= p75)
+    y_gate = y_te[gate_mask]
+    p_gate = y_pred[gate_mask]
+    
+    # ── TRAP 2 FIX: Add Transaction Costs (3.0 bps round trip for MOC/MOO) ──
+    # target units are roughly basis points due to * 10000 multiplier
+    cost_bps = 3.0
+    capture = np.sign(p_gate) * y_gate - cost_bps
+    
+    win_rate  = (capture > 0).mean()
+    mean_cap  = capture.mean()
+    n_trades  = len(capture)
+    std_cap   = capture.std()
+    daily_n   = n_trades / max(1, len(df_eval['Date'].unique()))
+    sharpe    = (mean_cap / max(std_cap, 1e-9)) * np.sqrt(252 * daily_n)
+
+    return {
+        'spearman_rho': rho,
+        'p_value':      pval,
+        'n_eval':       len(y_te),
+        'n_trades':     n_trades,
+        'win_rate':     win_rate,
+        'mean_capture': mean_cap,
+        'annualized_sharpe': sharpe,
+    }
+
+def describe_data(df, filtered, params):
+    directed = df[df['Direction'] != 0]
+    nonzero = df[df['Perm_CLOP'].abs() > 0.001] if 'Perm_CLOP' in df.columns else df.iloc[:0]
+    return {
+        'total_raw_bursts': len(df),
+        'directed_bursts':  len(directed),
+        'directed_pct':     round(100 * len(directed) / max(len(df), 1), 2),
+        'nonzero_clop':     len(nonzero),
+        'filtered_bursts':  len(filtered),
+        'filtered_pct':     round(100 * len(filtered) / max(len(df), 1), 2),
+        'vol_median':       round(df['Volume'].median(), 0),
+        'cancel_ratio_mean': round(df['CancelRatio'].mean(), 4) if 'CancelRatio' in df.columns else None,
+        'clop_mean':        round(df['Perm_CLOP'].mean(), 4) if 'Perm_CLOP' in df.columns else None,
+        'clop_std':         round(df['Perm_CLOP'].std(), 4) if 'Perm_CLOP' in df.columns else None,
+        'params':           params,
+    }
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--ticker', required=True)
+    ap.add_argument('--target', default='reg_clop')
+    ap.add_argument('--use-consensus', action='store_true')
+    ap.add_argument('--vol-frac',    type=float, default=None)
+    ap.add_argument('--dir-thresh',  type=float, default=None)
+    ap.add_argument('--vol-ratio',   type=float, default=None)
+    ap.add_argument('--max-cancel',  type=float, default=None)
+    ap.add_argument('--out-json', type=str, default=None)
+    args = ap.parse_args()
+
+    target_col = TARGET_MAP[args.target]
+
+    if args.use_consensus:
+        params = CONSENSUS_PARAMS.copy()
+    else:
+        params = {
+            'vol_frac':         args.vol_frac or CONSENSUS_PARAMS['vol_frac'],
+            'dir_thresh':       args.dir_thresh or CONSENSUS_PARAMS['dir_thresh'],
+            'vol_ratio':        args.vol_ratio or CONSENSUS_PARAMS['vol_ratio'],
+            'max_cancel_ratio': args.max_cancel or CONSENSUS_PARAMS['max_cancel_ratio'],
+        }
+
+    print(f"\n{'='*55}")
+    print(f"PASSIVE OOS EVAL — {args.ticker} — {args.target}")
+    print(f"{'='*55}")
+    print(f"Params: {params}")
+
+    df  = load_data(args.ticker)
+    adv = compute_trailing_adv(df)
+
+    filtered = apply_filters(df, params, adv)
+    stats    = describe_data(df, filtered, params)
+
+    print(f"\nData Stats:")
+    print(f"  Total raw bursts:  {stats['total_raw_bursts']:,}")
+    print(f"  Directed bursts:   {stats['directed_bursts']:,}  ({stats['directed_pct']}%)")
+    print(f"  After filtering:   {stats['filtered_bursts']:,}  ({stats['filtered_pct']}%)")
+    print(f"  Median volume:     {stats['vol_median']:,.0f}")
+    print(f"  CancelRatio mean:  {stats['cancel_ratio_mean']}")
+    print(f"  CLOP mean/std:     {stats['clop_mean']} / {stats['clop_std']}")
+
+    def to_builtin(obj):
+        if isinstance(obj, dict): return {k: to_builtin(v) for k, v in obj.items()}
+        elif isinstance(obj, list): return [to_builtin(v) for v in obj]
+        elif isinstance(obj, np.integer): return int(obj)
+        elif isinstance(obj, np.floating): return float(obj)
+        elif isinstance(obj, np.ndarray): return obj.tolist()
+        else: return obj
+
+    if len(filtered) < 50:
+        print(f"\n  !! WARN: Only {len(filtered)} bursts after filtering — not enough for model training.")
+        print(f"  !! This ticker has near-zero directional passive activity.")
+        result = {'ticker': args.ticker, 'error': 'insufficient_bursts',
+                  'filtered_bursts': len(filtered), **stats}
+        if args.out_json:
+            os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
+            with open(args.out_json, 'w') as f:
+                json.dump(to_builtin(result), f, indent=2)
+        return
+
+    filtered = filtered.dropna(subset=[target_col]).copy()
+
+    y_te, y_pred = walk_forward_sgd(filtered, target_col)
+    if y_te is None:
+        print("  Walk-forward returned no results.")
+        return
+
+    metrics = evaluate(y_te, y_pred, filtered, target_col)
+
+    print(f"\nOOS Results:")
+    print(f"  Spearman ρ:        {metrics['spearman_rho']:.4f}  (p={metrics['p_value']:.4f})")
+    print(f"  Eval bursts:       {metrics['n_eval']:,}")
+    print(f"  Gated trades:      {metrics['n_trades']:,}")
+    print(f"  Win Rate:          {metrics['win_rate']:.4f}")
+    print(f"  Mean Capture:      {metrics['mean_capture']:.4f}")
+    print(f"  Annualized Sharpe: {metrics['annualized_sharpe']:.2f}")
+
+    result = {'ticker': args.ticker, 'params': params, **stats, **metrics}
+
+    if args.out_json:
+        os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
+        with open(args.out_json, 'w') as f:
+            json.dump(to_builtin(result), f, indent=2)
+        print(f"\nSaved → {args.out_json}")
+
+if __name__ == '__main__':
+    main()

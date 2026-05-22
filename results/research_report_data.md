@@ -273,3 +273,103 @@ Using 2023-2024 parameters on 2019-2021 LLY data (different sector, different re
 3. **Order Book Execution Prices**: We reconstruct the BBO but execute at MOC/MOO. Could potentially use reconstructed 4:00 PM BBO for more realistic friction modeling.
 4. **Single-Stock Isolation**: The strategy trades each ticker independently. Cross-asset correlation effects (e.g., sector momentum, index rotation) are not modeled.
 5. **2023-2024 Bull Market Bias**: All "successful" tickers rose substantially during the test period. The excess alpha calculation (vs. overnight B&H) is the proper defense, but more bear-market data is needed.
+
+---
+
+# PART X: OPTION B — REGRESSION OPTUNA SWEEP RESULTS (2026-05-20)
+
+## 10.1 Methodology
+- **Objective**: Confidence-scaled Spearman rank correlation (ρ × min(1, n_test/500))
+- **Model**: SGDRegressor(loss='huber', epsilon=1.35, penalty='l2', alpha=0.001, learning_rate='adaptive', eta0=0.001) — exact mirror of Phase-III backtest
+- **Anti-Sparsity Defense**: Hard floor of 200 minimum bursts; score penalized by confidence factor
+- **Target**: reg_clop (continuous VSI, NOT binary classification)
+- **Split**: 70/30 chronological
+- **Trials**: 100 per ticker per Hawkes tag
+
+## 10.2 Best Regression Parameters Per Ticker (reg_clop, best Hawkes tag)
+
+| Ticker | Best Tag | Spearman ρ | p-value | n_test | vol_frac | dir_thresh | vol_ratio | kappa |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| **NVDA** | b1p0_i0p3 | **0.196** | 0.0 | 145,000 | 6.45e-05 | 0.509 | 0.583 | 0.824 |
+| **TSLA** | b1p0_i0p3 | **0.094** | 3.0e-07 | 2,952 | 0.00330 | 0.568 | 0.599 | 1.736 |
+| **JPM** | b1p0_i0p8 | **0.149** | 1.3e-07 | 1,249 | 0.00326 | 0.592 | 0.379 | 1.707 |
+| **MS** | b1p0_i0p8 | **0.126** | 0.001 | 651 | 0.00496 | 0.908 | 0.048 | 0.981 |
+
+## 10.3 Regression Spearman Stability (Cross-Tag)
+
+| Ticker | i0p3 ρ | i0p5 ρ | i0p8 ρ | Max Δ |
+|:---|:---|:---|:---|:---|
+| NVDA | 0.196 | 0.197 | 0.196 | 0.001 |
+| TSLA | 0.094 | 0.053 | 0.088 | 0.041 |
+| JPM  | 0.049 | 0.134 | 0.149 | 0.100 |
+| MS   | 0.125 | 0.071 | 0.126 | 0.055 |
+
+## 10.4 Full Regression Sweep Data (All Tags × All Tickers)
+
+| Ticker | Tag | Spearman ρ | p-value | n_test | n_train | n_total | vol_frac | dir_thresh | vol_ratio | kappa |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| NVDA | i0p3 | 0.196 | 0.0 | 145,000 | 427,872 | 574,765 | 6.45e-05 | 0.509 | 0.583 | 0.824 |
+| NVDA | i0p5 | 0.197 | 0.0 | 142,414 | 419,278 | 563,547 | 6.64e-05 | 0.530 | 0.596 | 1.926 |
+| NVDA | i0p8 | 0.196 | 0.0 | 140,970 | 415,165 | 557,970 | 6.75e-05 | 0.502 | 0.582 | 1.216 |
+| TSLA | i0p3 | 0.094 | 3.0e-07 | 2,952 | 5,982 | 8,958 | 0.00330 | 0.568 | 0.599 | 1.736 |
+| TSLA | i0p5 | 0.053 | 3.6e-20 | 29,570 | 61,215 | 91,038 | 4.48e-04 | 0.556 | 0.291 | 0.372 |
+| TSLA | i0p8 | 0.088 | 6.1e-38 | 21,143 | 43,485 | 64,810 | 6.19e-04 | 0.516 | 0.582 | 0.132 |
+| JPM | i0p3 | 0.049 | 9.3e-126 | 238,170 | 622,451 | 860,621 | 1.0e-05 | 0.561 | 0.570 | 0.200 |
+| JPM | i0p5 | 0.134 | 6.8e-07 | 1,372 | 1,859 | 3,239 | 0.00312 | 0.538 | 0.307 | 1.706 |
+| JPM | i0p8 | 0.149 | 1.3e-07 | 1,249 | 1,697 | 2,953 | 0.00326 | 0.592 | 0.379 | 1.707 |
+| MS | i0p3 | 0.125 | 0.001 | 655 | 1,030 | 1,686 | 0.00494 | 0.902 | 0.018 | 1.399 |
+| MS | i0p5 | 0.071 | 0.066 | 665 | 1,051 | 1,717 | 0.00489 | 0.846 | 0.149 | 0.953 |
+| MS | i0p8 | 0.126 | 0.001 | 651 | 1,021 | 1,673 | 0.00496 | 0.908 | 0.048 | 0.981 |
+
+---
+
+# PART XI: OPTION B BACKTEST RESULTS (CLOP, $10M AUM, 1.0 bps)
+
+## 11.1 Core 2023-2024 Tickers (Ticker-Specific Regression Params)
+
+| Ticker | Period | Trades | Long/Short | Long Win% | Short Win% | Net PnL ($) | ROC (%) | Max DD | Sharpe |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| **NVDA** | 2023-2024 | 470 | 286/184 | 56.99% | 42.93% | +$15,108,538 | **+151.09%** | -30.5% | 1.09 |
+| **TSLA** | 2023-2024 | 380 | 104/276 | 57.69% | 50.00% | +$11,969,031 | **+119.69%** | -18.3% | 2.07 |
+| JPM | 2023-2024 | 125 | 23/102 | 60.87% | 50.00% | -$1,006,928 | -10.07% | -13.5% | -0.95 |
+| MS | 2023-2024 | 37 | 9/28 | 55.56% | 42.86% | -$595,019 | -5.95% | -10.4% | -0.80 |
+
+## 11.2 Out-of-Sample 2019-2021 (Averaged Regression Params)
+
+| Ticker | Period | Trades | Long/Short | Long Win% | Short Win% | Net PnL ($) | ROC (%) | Max DD | Sharpe |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| **LLY** | 2019-2021 | 443 | 398/45 | 55.53% | 44.44% | +$2,615,706 | **+26.16%** | -16.5% | 0.76 |
+| AAPL | 2019-2021 | 328 | 248/80 | 54.84% | 41.25% | +$170,134 | +1.70% | -35.5% | 0.05 |
+| SPY | 2019-2021 | 264 | 234/30 | 54.70% | 20.00% | -$1,697,553 | -16.98% | -18.6% | -1.24 |
+
+## 11.3 Head-to-Head: Classification-Optimized vs Regression-Optimized
+
+| Ticker | Classification ROC | Classification Sharpe | Regression ROC | Regression Sharpe | Delta ROC |
+|:---|:---|:---|:---|:---|:---|
+| **NVDA** | +141.62% | 1.58 | **+151.09%** | 1.09 | **+9.5pp** ↑ |
+| **TSLA** | +73.21% | 1.57 | **+119.69%** | 2.07 | **+46.5pp** ↑ |
+| JPM | -0.70% | -0.03 | -10.07% | -0.95 | -9.4pp ↓ |
+| MS | -5.05% | -0.47 | -5.95% | -0.80 | -0.9pp ↓ |
+| **LLY** (OOS) | +11.27% | 0.32 | **+26.16%** | 0.76 | **+14.9pp** ↑ |
+| AAPL (OOS) | -30.31% | -0.87 | **+1.70%** | 0.05 | **+32.0pp** ↑ |
+| SPY (OOS) | +31.86% | 1.35 | -16.98% | -1.24 | -48.8pp ↓ |
+
+## 11.4 Key Observations
+
+**Assets where regression-optimized params improved performance:**
+- NVDA: +9.5pp ROC improvement. Critically, BOTH longs (+$11.1M) and shorts (+$4.0M) are now profitable. Max drawdown reduced from 65.5% to 30.5%.
+- TSLA: +46.5pp ROC improvement. Sharpe increased from 1.57 to 2.07. Both sides profitable.
+- LLY: +14.9pp ROC improvement. Sharpe doubled from 0.32 to 0.76. Both sides profitable.
+- AAPL: Flipped from -30.31% to +1.70%. No longer a negative control.
+
+**Assets where regression-optimized params degraded performance:**
+- JPM: Worse (-10.07% vs -0.70%). The regression params produced fewer trades (125 vs 470) and a heavy short bias (23L/102S) in a bull market.
+- MS: Slightly worse. Very few trades (37 total).
+- SPY: Significantly worse (-16.98% vs +31.86%). The averaged universal parameters do not suit SPY. SPY would need its own dedicated parameter optimization.
+
+**Interpretation:**
+The regression-aligned optimization finds parameters that select for bursts with LARGE predicted overnight impact, not just correct directional classification. This produces:
+1. Higher per-trade edge on momentum assets (NVDA, TSLA, LLY)
+2. Fewer but higher-conviction trades on noisy assets (JPM: 125 vs 470 trades)
+3. A structural bias toward high-kappa values (~1.7), enforcing strict decay gating that removes noise bursts
+

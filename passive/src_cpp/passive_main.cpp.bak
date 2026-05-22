@@ -1,0 +1,534 @@
+// ─────────────────────────────────────────────────────────────
+// passive_main.cpp — Passive Limit Order Burst Detection
+// ─────────────────────────────────────────────────────────────
+//
+// Detects bursts of Type 1 (limit order submissions) at L1-L3.
+// Cancellations (Types 2/3) are tracked as features, NOT triggers.
+// Reuses the existing OrderBook and LobsterParser from src_cpp/.
+//
+// Output: CSV with passive burst features + forward mid-prices
+//         for downstream target calculation.
+// ─────────────────────────────────────────────────────────────
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <vector>
+#include <deque>
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <chrono>
+#include <cerrno>
+#include <cstring>
+#include <dirent.h>
+#include <numeric>
+
+#include "../../src_cpp/parser.h"
+#include "../../src_cpp/types.h"
+#include "passive_burst.h"
+#include "../../src_cpp/orderbook.h"
+
+// ── Helpers (copied from main.cpp to avoid coupling) ────────
+
+constexpr double RTH_DEFAULT_START = 34200.0;
+constexpr double RTH_DEFAULT_END   = 57600.0;
+
+std::vector<std::string> find_message_files(const std::string& folder) {
+    std::vector<std::string> files;
+    DIR* dir = opendir(folder.c_str());
+    if (!dir) return files;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name.find("message") != std::string::npos &&
+            name.size() > 4 && name.substr(name.size() - 4) == ".csv") {
+            std::string path = folder;
+            if (!path.empty() && path.back() != '/') path += '/';
+            files.push_back(path + name);
+        }
+    }
+    closedir(dir);
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+std::string extract_date(const std::string& filepath) {
+    auto slash = filepath.rfind('/');
+    std::string fname = (slash != std::string::npos) ? filepath.substr(slash + 1) : filepath;
+    auto first  = fname.find('_');
+    if (first == std::string::npos) return "unknown";
+    auto second = fname.find('_', first + 1);
+    if (second == std::string::npos) return "unknown";
+    return fname.substr(first + 1, second - first - 1);
+}
+
+std::string extract_ticker(const std::string& folder) {
+    std::string path = folder;
+    while (!path.empty() && path.back() == '/') path.pop_back();
+    auto slash = path.rfind('/');
+    std::string dirname = (slash != std::string::npos) ? path.substr(slash + 1) : path;
+    auto upos = dirname.find('_');
+    return (upos != std::string::npos) ? dirname.substr(0, upos) : dirname;
+}
+
+double lookup_mid(const std::vector<std::pair<double, double>>& snaps, double target_time) {
+    if (snaps.empty()) return 0.0;
+    if (target_time <= snaps.front().first) return snaps.front().second;
+    if (target_time >= snaps.back().first)  return snaps.back().second;
+    auto it = std::upper_bound(snaps.begin(), snaps.end(), target_time,
+        [](double t, const std::pair<double, double>& p) { return t < p.first; });
+    if (it != snaps.begin()) --it;
+    return it->second;
+}
+
+double find_peak_price(const std::vector<std::pair<double, double>>& snaps,
+                       double start_time, double start_price, double tau_max, int direction) {
+    if (snaps.empty()) return start_price;
+    auto it = std::lower_bound(snaps.begin(), snaps.end(), start_time,
+        [](const std::pair<double, double>& p, double t) { return p.first < t; });
+    double end_time = start_time + tau_max;
+    double max_p = start_price, min_p = start_price;
+    while (it != snaps.end() && it->first <= end_time) {
+        max_p = std::max(max_p, it->second);
+        min_p = std::min(min_p, it->second);
+        ++it;
+    }
+    if (direction == 1)  return max_p;
+    if (direction == -1) return min_p;
+    return (std::abs(max_p - start_price) >= std::abs(min_p - start_price)) ? max_p : min_p;
+}
+
+// Compute total RTH trade volume (Types 4/5) for ADV scaling
+long long compute_rth_trade_volume(const std::string& msg_file, double rth_start, double rth_end) {
+    LobsterParser parser(msg_file);
+    LobsterMessage msg;
+    long long vol = 0;
+    while (parser.next_message(msg)) {
+        if (msg.time < rth_start || msg.time > rth_end) continue;
+        if (msg.type == 4 || msg.type == 5) vol += (long long)msg.size;
+    }
+    return vol;
+}
+
+struct MarketState {
+    double spread;
+    int bid_vol_best;
+    int ask_vol_best;
+    int bid_depth_5;
+    int ask_depth_5;
+    double book_imbalance;
+    double volatility_60s;
+    double momentum_5s;
+    double momentum_30s;
+    double momentum_60s;
+    int trade_count_5m;
+    int trade_volume_5m;
+};
+
+struct DayResult {
+    std::string date;
+    long msg_count = 0;
+    size_t burst_candidates = 0;
+    size_t burst_kept = 0;
+};
+
+void print_usage(const char* prog) {
+    std::cerr << "Usage: " << prog << " <stock_folder> <output_file> [options]\n"
+              << "Options:\n"
+              << "  -v <vol_frac>   submission volume fraction of trailing 14-day ADV (default: 0.0001)\n"
+              << "  -d <direction>  direction count-ratio threshold (default: 0.6)\n"
+              << "  -r <vol_ratio>  volume ratio cap (default: 0.5)\n"
+              << "  -k <kappa>      kappa filter (default: 0.0, no filter for passive)\n"
+              << "  -t <tau_max>    peak-impact horizon in seconds (default: 10.0)\n"
+              << "  -j <workers>    parallel day workers (default: 1)\n"
+              << "  -b <rth_start>  RTH start sec-past-midnight (default: 34200)\n"
+              << "  -e <rth_end>    RTH end (default: 57600)\n"
+              << "  -H <beta>       Hawkes decay rate (default: 1.0)\n"
+              << "  -I <intensity>  Hawkes trigger threshold (default: 0.5)\n"
+              << "  -L <levels>     max BBO levels for submission filter (default: 3)\n";
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 3) { print_usage(argv[0]); return 1; }
+
+    std::string stock_folder = argv[1];
+    std::string output_file  = argv[2];
+
+    { std::ofstream probe(output_file);
+      if (!probe.is_open()) {
+          std::cerr << "Error: cannot open output: '" << output_file << "'\n";
+          return 1;
+      }
+    }
+
+    double volume_fraction     = 0.0001;
+    double direction_threshold = 0.6;
+    double volume_ratio_threshold = 0.5;
+    double kappa               = 0.0;
+    double tau_max             = 10.0;
+    double rth_start           = RTH_DEFAULT_START;
+    double rth_end             = RTH_DEFAULT_END;
+    int workers                = 1;
+    double hawkes_beta         = 1.0;
+    double trigger_intensity   = 0.5;
+    int max_bbo_levels         = 3;
+
+    for (int i = 3; i < argc; i += 2) {
+        if (i + 1 >= argc) break;
+        std::string opt = argv[i];
+        if      (opt == "-v") volume_fraction     = std::stod(argv[i+1]);
+        else if (opt == "-d") direction_threshold = std::stod(argv[i+1]);
+        else if (opt == "-r") volume_ratio_threshold = std::stod(argv[i+1]);
+        else if (opt == "-k") kappa               = std::stod(argv[i+1]);
+        else if (opt == "-t") tau_max             = std::stod(argv[i+1]);
+        else if (opt == "-j") workers             = std::max(1, std::stoi(argv[i+1]));
+        else if (opt == "-b") rth_start           = std::stod(argv[i+1]);
+        else if (opt == "-e") rth_end             = std::stod(argv[i+1]);
+        else if (opt == "-H") hawkes_beta         = std::stod(argv[i+1]);
+        else if (opt == "-I") trigger_intensity   = std::stod(argv[i+1]);
+        else if (opt == "-L") max_bbo_levels      = std::stoi(argv[i+1]);
+    }
+
+    auto msg_files = find_message_files(stock_folder);
+    if (msg_files.empty()) {
+        std::cerr << "Error: No message files in " << stock_folder << "\n";
+        return 1;
+    }
+
+    std::string ticker = extract_ticker(stock_folder);
+
+    // Precompute ADV using Type 4/5 trade volume (avoids HFT quote spam bloat)
+    const size_t ADV_WINDOW = 14;
+    std::vector<long long> day_sub_volumes(msg_files.size(), 0);
+    std::vector<double> day_min_volume_thresholds(msg_files.size(), 0.0);
+    std::deque<long long> adv_history;
+    long long adv_history_sum = 0;
+
+    for (size_t i = 0; i < msg_files.size(); ++i) {
+        long long day_vol = compute_rth_trade_volume(msg_files[i], rth_start, rth_end);
+        day_sub_volumes[i] = day_vol;
+        double trailing_adv = (!adv_history.empty())
+            ? (double)adv_history_sum / (double)adv_history.size()
+            : (double)day_vol;
+        day_min_volume_thresholds[i] = volume_fraction * trailing_adv;
+        adv_history.push_back(day_vol);
+        adv_history_sum += day_vol;
+        if (adv_history.size() > ADV_WINDOW) {
+            adv_history_sum -= adv_history.front();
+            adv_history.pop_front();
+        }
+    }
+
+    std::cout << "PASSIVE Burst Detector\n";
+    std::cout << "Ticker: " << ticker << "\n";
+    std::cout << "Found " << msg_files.size() << " day file(s)\n";
+    std::cout << "Settings: vol_frac=" << volume_fraction
+              << "  dir_thresh=" << direction_threshold
+              << "  hawkes_beta=" << hawkes_beta
+              << "  trigger_intensity=" << trigger_intensity
+              << "  max_bbo_levels=" << max_bbo_levels
+              << "  workers=" << workers << "\n\n";
+
+    std::ofstream out(output_file);
+    if (!out.is_open()) {
+        std::cerr << "Error: cannot open output: '" << output_file << "'\n";
+        return 1;
+    }
+    out << "Ticker,Date,BurstID,StartTime,EndTime,Direction,Volume,SubmissionCount,"
+        << "BidSubCount,AskSubCount,BidSubVolume,AskSubVolume,BidRatio,AskRatio,MinMaxVolRatio,"
+        << "StartPrice,EndPrice,PeakPrice,CloseMid,"
+        << "Mid_1m,Mid_3m,Mid_5m,Mid_10m,"
+        << "Spread,BidVolBest,AskVolBest,BidDepth5,AskDepth5,BookImbalance,"
+        << "Volatility60s,Momentum5s,Momentum30s,Momentum60s,"
+        << "TradeCount5m,TradeVolume5m,"
+        << "SubmissionSizeVariance,RoundLotPct,HawkesPeakIntensity,"
+        << "CancelCount,CancelVolume,BidCancelCount,AskCancelCount,"
+        << "BidCancelVolume,AskCancelVolume,CancelRatio,PreBurstCancelRate\n";
+
+    std::mutex log_mutex, write_mutex;
+    auto t0 = std::chrono::steady_clock::now();
+
+    auto process_day = [&](const std::string& msg_file, size_t day_idx, size_t total_days,
+                           std::atomic<size_t>& done_counter) -> DayResult {
+        DayResult day_res;
+        day_res.date = extract_date(msg_file);
+
+        { std::lock_guard<std::mutex> lk(log_mutex);
+          std::cout << "[start " << (day_idx+1) << "/" << total_days << "] "
+                    << day_res.date << "\n";
+        }
+
+        OrderBook book;
+        PassiveBurstDetector detector(
+            1.0, day_min_volume_thresholds[day_idx], direction_threshold,
+            volume_ratio_threshold, hawkes_beta, trigger_intensity, max_bbo_levels);
+        LobsterParser parser(msg_file);
+
+        std::vector<std::pair<double, double>> mid_snapshots;
+        mid_snapshots.reserve(500000);
+
+        // Rolling stats
+        std::deque<std::pair<double, double>> mid_ring;
+        const double VOL_WINDOW = 60.0;
+        struct TradeStamp { double time; int size; };
+        std::deque<TradeStamp> trade_ring;
+        const double TRADE_WINDOW = 300.0;
+
+        // Pre-burst cancel ring
+        struct CancelEvent { double time; int direction; int size; };
+        std::deque<CancelEvent> cancel_ring;
+        double cancel_window = 0.050;
+
+        auto calc_volatility = [&](double now) -> double {
+            while (!mid_ring.empty() && mid_ring.front().first < now - VOL_WINDOW)
+                mid_ring.pop_front();
+            if (mid_ring.size() < 2) return 0.0;
+            double sum_sq = 0.0; int n = 0;
+            for (size_t k = 1; k < mid_ring.size(); ++k) {
+                double prev = mid_ring[k-1].second;
+                if (prev == 0.0) continue;
+                double ret = (mid_ring[k].second - prev) / prev;
+                sum_sq += ret * ret; ++n;
+            }
+            return (n > 0) ? std::sqrt(sum_sq / n) : 0.0;
+        };
+
+        auto calc_momentum = [&](double now, double delta, double current_mid) -> double {
+            double target = now - delta;
+            double ref_mid = 0.0;
+            for (auto it = mid_ring.rbegin(); it != mid_ring.rend(); ++it) {
+                if (it->first <= target) { ref_mid = it->second; break; }
+            }
+            if (ref_mid == 0.0 || current_mid == 0.0) return 0.0;
+            return (current_mid - ref_mid) / ref_mid;
+        };
+
+        auto calc_trade_stats = [&](double now) -> std::pair<int, int> {
+            while (!trade_ring.empty() && trade_ring.front().time < now - TRADE_WINDOW)
+                trade_ring.pop_front();
+            int cnt = 0, vol = 0;
+            for (auto& t : trade_ring) { ++cnt; vol += t.size; }
+            return {cnt, vol};
+        };
+
+        auto snapshot_market_state = [&](double now, double current_mid) -> MarketState {
+            MarketState s{};
+            s.spread = book.get_spread();
+            s.bid_vol_best = book.get_bid_volume_at_best();
+            s.ask_vol_best = book.get_ask_volume_at_best();
+            s.bid_depth_5 = book.get_bid_depth(5);
+            s.ask_depth_5 = book.get_ask_depth(5);
+            double total_depth = (double)(s.bid_depth_5 + s.ask_depth_5);
+            s.book_imbalance = (total_depth > 0)
+                ? (double)(s.bid_depth_5 - s.ask_depth_5) / total_depth : 0.0;
+            s.volatility_60s = calc_volatility(now);
+            s.momentum_5s = calc_momentum(now, 5.0, current_mid);
+            s.momentum_30s = calc_momentum(now, 30.0, current_mid);
+            s.momentum_60s = calc_momentum(now, 60.0, current_mid);
+            auto [tc, tv] = calc_trade_stats(now);
+            s.trade_count_5m = tc; s.trade_volume_5m = tv;
+            return s;
+        };
+
+        auto calc_preburst_cancel_rate = [&](double burst_start_time) -> double {
+            double prune_cutoff = burst_start_time - 1.0;
+            while (!cancel_ring.empty() && cancel_ring.front().time < prune_cutoff)
+                cancel_ring.pop_front();
+            double window_start = burst_start_time - cancel_window;
+            int ask_cancels = 0, bid_cancels = 0, total_events = 0;
+            for (auto it = cancel_ring.rbegin(); it != cancel_ring.rend(); ++it) {
+                if (it->time < window_start) break;
+                if (it->time > burst_start_time) continue;
+                total_events++;
+                if (it->direction == -1) ask_cancels++; else bid_cancels++;
+            }
+            if (total_events == 0) return 0.0;
+            return (double)std::max(ask_cancels, bid_cancels) / (double)total_events;
+        };
+
+        LobsterMessage msg;
+        PassiveBurst finished;
+        std::vector<std::pair<PassiveBurst, MarketState>> day_bursts;
+        double current_mid = 0.0;
+        long msg_count = 0;
+        bool flushed = false;
+
+        while (parser.next_message(msg)) {
+            ++msg_count;
+            bool bbo_changed = book.process_message(msg);
+
+            if (book.is_valid()) {
+                double new_mid = book.get_mid_price();
+                if (new_mid != current_mid) {
+                    current_mid = new_mid;
+                    mid_snapshots.push_back({msg.time, current_mid});
+                }
+            }
+
+            // Track cancellations for pre-burst feature
+            if (msg.type == 2 || msg.type == 3) {
+                cancel_ring.push_back({msg.time, msg.direction, msg.size});
+            }
+
+            if (msg.time < rth_start) continue;
+
+            // Rolling stats
+            if (current_mid > 0.0) {
+                if (mid_ring.empty() || mid_ring.back().second != current_mid)
+                    mid_ring.push_back({msg.time, current_mid});
+            }
+            if (msg.type == 4 || msg.type == 5)
+                trade_ring.push_back({msg.time, msg.size});
+
+            if (msg.time > rth_end) {
+                if (!flushed) {
+                    if (detector.flush(finished)) {
+                        MarketState ms = snapshot_market_state(finished.start_time, current_mid);
+                        day_bursts.push_back({finished, ms});
+                    }
+                    flushed = true;
+                }
+                continue;
+            }
+
+            // Feed to passive burst detector
+            if (current_mid > 0.0 && book.is_valid()) {
+                if (msg.type == 1) {
+                    double cr = calc_preburst_cancel_rate(msg.time);
+                    detector.set_preburst_cancel_rate(cr);
+                }
+                int bb = book.get_best_bid();
+                int ba = book.get_best_ask();
+                if (detector.process(msg, current_mid, bb, ba, finished)) {
+                    MarketState ms = snapshot_market_state(finished.start_time, current_mid);
+                    day_bursts.push_back({finished, ms});
+                }
+            }
+        }
+
+        if (!flushed && detector.flush(finished)) {
+            MarketState ms = snapshot_market_state(finished.start_time, current_mid);
+            day_bursts.push_back({finished, ms});
+        }
+
+        double close_mid = current_mid;
+
+        // Compute forward returns and write CSV
+        std::ostringstream day_csv;
+        for (auto& [b, ms] : day_bursts) {
+            b.peak_price = find_peak_price(mid_snapshots, b.start_time, b.start_price, tau_max, b.direction);
+
+            double mid_1m  = lookup_mid(mid_snapshots, b.end_time + 60.0);
+            double mid_3m  = lookup_mid(mid_snapshots, b.end_time + 180.0);
+            double mid_5m  = lookup_mid(mid_snapshots, b.end_time + 300.0);
+            double mid_10m = lookup_mid(mid_snapshots, b.end_time + 600.0);
+
+            // Apply kappa if set (default 0 for passive)
+            if (kappa > 0.0) {
+                // Compute D_b analog
+                double dsum = 0.0; int dc = 0;
+                auto acc = [&](double mid) {
+                    if (mid > 0.0) {
+                        dsum += (double)b.volume * (double)b.direction * (mid - b.start_price);
+                        dc++;
+                    }
+                };
+                acc(mid_1m); acc(mid_3m); acc(mid_5m); acc(mid_10m);
+                double d_b = (dc > 0) ? (dsum / dc) : 0.0;
+                if (d_b < kappa) continue;
+            }
+
+            day_csv << ticker << "," << day_res.date << ","
+                    << b.id << ","
+                    << std::fixed << std::setprecision(6)
+                    << b.start_time << "," << b.end_time << ","
+                    << b.direction << "," << b.volume << ","
+                    << b.submission_count << ","
+                    << b.bid_sub_count << "," << b.ask_sub_count << ","
+                    << b.bid_sub_volume << "," << b.ask_sub_volume << ","
+                    << b.bid_ratio << "," << b.ask_ratio << ","
+                    << b.minmax_vol_ratio << ","
+                    << std::setprecision(4)
+                    << b.start_price << "," << b.end_price << "," << b.peak_price << ","
+                    << close_mid << ","
+                    << mid_1m << "," << mid_3m << "," << mid_5m << "," << mid_10m << ","
+                    << std::setprecision(6)
+                    << ms.spread << ","
+                    << ms.bid_vol_best << "," << ms.ask_vol_best << ","
+                    << ms.bid_depth_5 << "," << ms.ask_depth_5 << ","
+                    << ms.book_imbalance << ","
+                    << std::setprecision(8)
+                    << ms.volatility_60s << ","
+                    << ms.momentum_5s << "," << ms.momentum_30s << "," << ms.momentum_60s << ","
+                    << ms.trade_count_5m << "," << ms.trade_volume_5m << ","
+                    << std::setprecision(4)
+                    << b.submission_size_variance << ","
+                    << std::setprecision(6)
+                    << b.round_lot_pct << ","
+                    << std::setprecision(4)
+                    << b.hawkes_peak_intensity << ","
+                    << b.cancel_count << "," << b.cancel_volume << ","
+                    << b.bid_cancel_count << "," << b.ask_cancel_count << ","
+                    << b.bid_cancel_volume << "," << b.ask_cancel_volume << ","
+                    << std::setprecision(6)
+                    << b.cancel_ratio << ","
+                    << b.preburst_cancel_rate
+                    << "\n";
+            day_res.burst_kept++;
+        }
+
+        { std::lock_guard<std::mutex> lk(write_mutex); out << day_csv.str(); }
+
+        day_res.msg_count = msg_count;
+        day_res.burst_candidates = day_bursts.size();
+
+        size_t done = done_counter.fetch_add(1) + 1;
+        { std::lock_guard<std::mutex> lk(log_mutex);
+          std::cout << "[done  " << done << "/" << total_days << "] "
+                    << day_res.date << " msgs=" << msg_count
+                    << " bursts=" << day_res.burst_candidates
+                    << " kept=" << day_res.burst_kept << "\n";
+        }
+        return day_res;
+    };
+
+    std::vector<DayResult> day_results(msg_files.size());
+    std::atomic<size_t> done_counter{0};
+
+    if (workers <= 1 || msg_files.size() <= 1) {
+        for (size_t i = 0; i < msg_files.size(); ++i)
+            day_results[i] = process_day(msg_files[i], i, msg_files.size(), done_counter);
+    } else {
+        int nthreads = std::min<int>(workers, (int)msg_files.size());
+        std::atomic<size_t> next_idx{0};
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads);
+        for (int t = 0; t < nthreads; ++t) {
+            pool.emplace_back([&]() {
+                while (true) {
+                    size_t i = next_idx.fetch_add(1);
+                    if (i >= msg_files.size()) break;
+                    day_results[i] = process_day(msg_files[i], i, msg_files.size(), done_counter);
+                }
+            });
+        }
+        for (auto& th : pool) th.join();
+    }
+
+    out.flush(); out.close();
+
+    auto t1 = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double>(t1 - t0).count();
+    size_t total_kept = 0;
+    for (const auto& d : day_results) total_kept += d.burst_kept;
+    std::cout << "\nTotal passive bursts: " << total_kept << "\n";
+    std::cout << "Elapsed: " << std::fixed << std::setprecision(1) << elapsed << "s\n";
+    std::cout << "Output: '" << output_file << "'\n";
+    return 0;
+}

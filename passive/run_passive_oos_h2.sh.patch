@@ -1,0 +1,28 @@
+--- passive/run_passive_oos_h2.sh
++++ passive/run_passive_oos_h2.sh
+@@ -10,3 +10,3 @@
+ # OOS-only passive detection + evaluation on LLY, SPY, AAPL
+-# Uses consensus params from NVDA/JPM/MS Optuna sweep.
++# Uses frozen params from Core Optuna sweep (NVDA/TSLA/JPM/MS).
+ # Task 1=LLY, 2=SPY, 3=AAPL
+@@ -16,8 +16,2 @@
+ 
+-# Consensus Optuna params (average of NVDA/JPM/MS)
+-VOL_FRAC=0.000681
+-DIR_THRESH=0.6408
+-VOL_RATIO=0.3759
+-MAX_CANCEL=0.7294
+-
+ # Fixed Hawkes (same as training)
+@@ -43,3 +37,2 @@
+ echo "PASSIVE OOS: ${TICKER}"
+-echo "Consensus params: vol_frac=${VOL_FRAC} dir=${DIR_THRESH} vol_ratio=${VOL_RATIO} cancel=${MAX_CANCEL}"
+ echo "==============================================="
+@@ -66,8 +59,6 @@
+ 
+-# ── Step 4: Run OOS eval with consensus params ─────────────────
+-echo "[${TICKER}] Running OOS evaluation with consensus params..."
++# ── Step 4: Run OOS eval with frozen Core params ─────────?-- passive/run_passive_oos_h2.sh
++++ passive/run_OO+++ passive/run_passive_oos_h2.sra@@ -10,3 +10,3 @@
+ # OOS-only paas # OOS-only pass \-# Uses consensus params from NVDA/JPM/MS Optuna sweep.
++# --+# Uses frozen params from Core Optuna sweep (NVDA/TSLos # Task 1=LLY, 2=SPY,son"

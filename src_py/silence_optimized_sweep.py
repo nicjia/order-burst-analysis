@@ -37,18 +37,49 @@ def parse_int_list(text):
     return [int(x.strip()) for x in text.split(",") if x.strip()]
 
 
-def compute_trailing_adv(df, window=14, min_periods=5):
-    """Compute trailing `window`-day Average Daily Volume per date.
+import glob
+import os
 
-    Uses shift(1) so that today's ADV is based on the *previous* `window`
-    trading days only — no look-ahead bias.
+def compute_trailing_adv(df, stock_folder, rth_start=34200.0, rth_end=57600.0, window=14, min_periods=5):
+    """Compute trailing `window`-day Average Daily Volume from raw LOBSTER messages.
 
-    Returns a Series indexed by Date with the trailing ADV (in shares).
-    Dates with fewer than `min_periods` history are NaN.
+    Calculates daily Traded Volume by summing ONLY the volume of Event Type == 4 (Visible) 
+    and Event Type == 5 (Hidden) from the raw LOBSTER message files within RTH.
+    Uses shift(1) to avoid look-ahead bias.
     """
-    daily_vol = df.groupby("Date")["Volume"].sum().sort_index()
-    adv = daily_vol.rolling(window, min_periods=min_periods).mean().shift(1)
-    return adv
+    msg_files = sorted(glob.glob(os.path.join(stock_folder, "*_message_*.csv")))
+    daily_vols = {}
+    
+    for fpath in msg_files:
+        fname = os.path.basename(fpath)
+        parts = fname.split('_')
+        if len(parts) >= 2:
+            date_str = parts[1]
+        else:
+            continue
+            
+        try:
+            # LOBSTER cols: Time, Type, OrderID, Size, Price, Direction
+            msg_df = pd.read_csv(fpath, header=None, usecols=[0, 1, 3], names=['Time', 'Type', 'Size'])
+            # Filter for RTH
+            rth_mask = (msg_df['Time'] >= rth_start) & (msg_df['Time'] <= rth_end)
+            msg_df = msg_df[rth_mask]
+            
+            # Sum ONLY Type 4 (Visible Execution) and Type 5 (Hidden Execution)
+            traded_vol = msg_df[msg_df['Type'].isin([4, 5])]['Size'].sum()
+            daily_vols[date_str] = traded_vol
+        except Exception as e:
+            print(f"Warning: could not process {fpath}: {e}")
+            
+    vol_series = pd.Series(daily_vols)
+    if not vol_series.empty:
+        vol_series.index = pd.to_datetime(vol_series.index).strftime('%Y-%m-%d')
+        vol_series = vol_series.sort_index()
+        adv = vol_series.rolling(window, min_periods=min_periods).mean().shift(1)
+        adv = adv.reindex(df['Date'].unique())
+        return adv
+    else:
+        return pd.Series(index=df['Date'].unique(), dtype=float)
 
 
 def classify_and_filter(df, min_vol, dir_thresh, vol_ratio, kappa, require_directional,
@@ -251,7 +282,13 @@ def main():
         # ── Compute trailing ADV (only needed for fractional volume mode) ──
         adv_series = None
         if use_frac_vol:
-            adv_series = compute_trailing_adv(base_df, window=args.adv_window)
+            adv_series = compute_trailing_adv(
+                base_df, 
+                stock_folder=args.stock_folder,
+                rth_start=args.rth_start,
+                rth_end=args.rth_end,
+                window=args.adv_window
+            )
             n_valid = adv_series.notna().sum()
             print(f"  ADV ({args.adv_window}d trailing): {n_valid}/{len(adv_series)} dates with valid ADV")
 

@@ -284,7 +284,7 @@ def main():
     print(f"Loaded {len(df):,} bursts in date range.")
 
     # Compute trailing ADV
-    adv_series = compute_trailing_adv(df, window=14)
+    adv_series = compute_trailing_adv(df, window=14, stock_folder=f"data/{args.ticker}")
 
     df_cache[tag]  = df
     adv_cache[tag] = adv_series

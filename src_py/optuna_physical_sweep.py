@@ -164,8 +164,8 @@ def objective(trial, ticker, target_key, fixed_hawkes_tag, min_rows_thresh):
         y, task_type, meta = build_target(filtered, target_key)
         X, feat_available = get_features(filtered, target_key)
         
-        if task_type != 'binary':
-            raise ValueError("Only binary classification is supported for this sweep.")
+        if task_type not in ('binary', 'regression'):
+            raise ValueError("Only binary or regression is supported for this sweep.")
             
     except Exception as e:
         raise optuna.exceptions.TrialPruned()
@@ -201,17 +201,27 @@ def objective(trial, ticker, target_key, fixed_hawkes_tag, min_rows_thresh):
         X_tr = np.nan_to_num(X_tr, nan=0.0, posinf=0.0, neginf=0.0)
         X_te = np.nan_to_num(X_te, nan=0.0, posinf=0.0, neginf=0.0)
 
-        from sklearn.ensemble import HistGradientBoostingClassifier
-        # HistGradientBoosting — extremely fast non-linear tree ensemble
-        model = HistGradientBoostingClassifier(
-            max_iter=50,
-            max_depth=5,
-            min_samples_leaf=50,
+        from sklearn.linear_model import SGDRegressor
+        from sklearn.preprocessing import StandardScaler
+        
+        scaler = StandardScaler()
+        X_tr_s = scaler.fit_transform(X_tr)
+        X_te_s = scaler.transform(X_te)
+
+        # SGDRegressor matching the production backtester
+        model = SGDRegressor(
+            loss='huber',
+            epsilon=1.35,
+            penalty='l2',
+            alpha=0.001,
+            learning_rate='adaptive',
+            eta0=0.001,
+            max_iter=1000,
             random_state=42,
         )
-        model.fit(X_tr, y_tr)
+        model.fit(X_tr_s, y_tr)
         
-        y_pred = model.predict_proba(X_te)[:, 1]
+        y_pred = model.predict(X_te_s)
         
         y_true_all.extend(y_te)
         y_pred_all.extend(y_pred)
@@ -219,8 +229,17 @@ def objective(trial, ticker, target_key, fixed_hawkes_tag, min_rows_thresh):
     if len(y_true_all) < min_rows_thresh or len(np.unique(y_true_all)) < 2:
         raise optuna.exceptions.TrialPruned()
         
-    auc = roc_auc_score(y_true_all, y_pred_all)
-    return auc
+    from scipy.stats import spearmanr
+    rho, _ = spearmanr(y_true_all, y_pred_all)
+    if np.isnan(rho):
+        rho = 0.0
+        
+    # Anti-Sparsity Confidence Scaling
+    CONFIDENCE_N = 500  # Target robust sample size across the walk-forward set
+    confidence = min(1.0, len(y_true_all) / CONFIDENCE_N)
+    
+    score = rho * confidence
+    return score
 
 
 def main():
@@ -288,7 +307,7 @@ def main():
         df_cache[tag] = df
         
         print(f"Computing 14d trailing ADV for {tag}...")
-        adv_cache[tag] = compute_trailing_adv(df, window=14)
+        adv_cache[tag] = compute_trailing_adv(df, window=14, stock_folder=f"data/{args.ticker}")
         
         print(f" -> {tag} loaded: {len(df):,} total unfiltered bursts.")
         
