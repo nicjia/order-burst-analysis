@@ -222,7 +222,7 @@ def main():
     
     # Compute the dynamic 14-day trailing ADV so we can filter correctly based on fraction
     print("Computing 14-day trailing cross-asset ADV...")
-    adv_series = compute_trailing_adv(df, window=14)
+    adv_series = compute_trailing_adv(df, window=14, stock_folder=f"data/{args.ticker}")
     burst_adv = df["Date"].map(adv_series)
     
     min_vol_per_burst = (args.vol_frac * burst_adv).reindex(df.index)
