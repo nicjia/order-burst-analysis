@@ -212,6 +212,12 @@ def main():
     print("Loading extremely raw LOBSTER C++ output into RAM...")
     df = pd.read_csv(args.data)
     
+    # Handle both integer and string date formats to match ADV integer indexing
+    try:
+        df['Date'] = df['Date'].astype(int)
+    except (ValueError, TypeError):
+        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y%m%d').astype(int)
+    
     df['DateCol'] = pd.to_datetime(df['Date'].astype(str))
     start_ts = pd.to_datetime(args.start_date)
     end_ts = pd.to_datetime(args.end_date)

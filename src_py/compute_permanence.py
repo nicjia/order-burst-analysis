@@ -79,8 +79,8 @@ def main():
     bursts['PeakImpact'] = (bursts['PeakPrice'] - bursts['StartPrice']).abs()
 
     # ── RTH safety filter (belt-and-suspenders with C++) ─────
-    #  9:30 AM = 34200 SPM,  4:00 PM = 57600 SPM
-    RTH_START, RTH_END = 34200.0, 57600.0
+    #  9:30 AM = 34200 SPM,  3:50 PM = 57000 SPM (10-min dead zone before 4:00 PM MOC)
+    RTH_START, RTH_END = 34200.0, 57000.0
     if 'StartTime' in bursts.columns:
         rth_mask = (bursts['StartTime'] >= RTH_START) & (bursts['StartTime'] <= RTH_END)
         n_outside = (~rth_mask).sum()

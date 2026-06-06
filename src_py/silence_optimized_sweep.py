@@ -40,43 +40,39 @@ def parse_int_list(text):
 import glob
 import os
 
-def compute_trailing_adv(df, stock_folder, rth_start=34200.0, rth_end=57600.0, window=14, min_periods=5):
-    """Compute trailing `window`-day Average Daily Volume from raw LOBSTER messages.
-
-    Calculates daily Traded Volume by summing ONLY the volume of Event Type == 4 (Visible) 
-    and Event Type == 5 (Hidden) from the raw LOBSTER message files within RTH.
-    Uses shift(1) to avoid look-ahead bias.
+def compute_trailing_adv(df, window=14, min_periods=1, stock_folder=None):
     """
-    msg_files = sorted(glob.glob(os.path.join(stock_folder, "*_message_*.csv")))
-    daily_vols = {}
+    Computes a daily trailing average volume from the precomputed true_adv_daily.csv.
+    """
+    if df.empty:
+        return pd.Series(dtype=float)
+        
+    try:
+        adv_df = pd.read_csv("results/true_adv_daily.csv")
+    except FileNotFoundError:
+        print("Warning: results/true_adv_daily.csv not found! Return NaNs.")
+        return pd.Series(index=df['Date'].unique(), dtype=float)
+        
+    # Extract ticker from stock_folder
+    ticker = os.path.basename(stock_folder.rstrip('/'))
+    adv_df = adv_df[adv_df['Ticker'] == ticker].copy()
     
-    for fpath in msg_files:
-        fname = os.path.basename(fpath)
-        parts = fname.split('_')
-        if len(parts) >= 2:
-            date_str = parts[1]
-        else:
-            continue
-            
-        try:
-            # LOBSTER cols: Time, Type, OrderID, Size, Price, Direction
-            msg_df = pd.read_csv(fpath, header=None, usecols=[0, 1, 3], names=['Time', 'Type', 'Size'])
-            # Filter for RTH
-            rth_mask = (msg_df['Time'] >= rth_start) & (msg_df['Time'] <= rth_end)
-            msg_df = msg_df[rth_mask]
-            
-            # Sum ONLY Type 4 (Visible Execution) and Type 5 (Hidden Execution)
-            traded_vol = msg_df[msg_df['Type'].isin([4, 5])]['Size'].sum()
-            daily_vols[date_str] = traded_vol
-        except Exception as e:
-            print(f"Warning: could not process {fpath}: {e}")
+    if adv_df.empty:
+        return pd.Series(index=df['Date'].unique(), dtype=float)
+        
+    daily_vols = dict(zip(adv_df['Date'], adv_df['TradedVolume']))
             
     vol_series = pd.Series(daily_vols)
     if not vol_series.empty:
-        vol_series.index = pd.to_datetime(vol_series.index).strftime('%Y-%m-%d')
+        vol_series.index = pd.to_datetime(vol_series.index).strftime('%Y%m%d').astype(int)
         vol_series = vol_series.sort_index()
         adv = vol_series.rolling(window, min_periods=min_periods).mean().shift(1)
-        adv = adv.reindex(df['Date'].unique())
+        # Convert df['Date'] to int for consistent reindexing just in case
+        try:
+            target_dates = df['Date'].astype(int).unique()
+        except:
+            target_dates = pd.to_datetime(df['Date']).dt.strftime('%Y%m%d').astype(int).unique()
+        adv = adv.reindex(target_dates)
         return adv
     else:
         return pd.Series(index=df['Date'].unique(), dtype=float)
