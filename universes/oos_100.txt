@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────────────────────────
+# OOS Universe — ~100 stocks for out-of-sample backtest & research
+# ─────────────────────────────────────────────────────────────────
+# These tickers are FIREWALLED from Optuna. All publishable results
+# come exclusively from this universe.
+#
+# CRITICAL: No ticker in this file may appear in train_50.txt.
+#           The pipeline will ABORT if overlap is detected.
+#
+# Scale this to 450+ by adding more tickers from open_all.csv.
+# ─────────────────────────────────────────────────────────────────
+
+# Mega-cap Tech (not in TRAIN)
+AAPL
+MSFT
+ADBE
+CRM
+ORCL
+NOW
+PANW
+CRWD
+FTNT
+ZS
+
+# Payments / FinTech
+V
+MA
+PYPL
+SQ
+HOOD
+SOFI
+LC
+
+# Asset Management / Insurance
+BLK
+TROW
+IVZ
+BEN
+FNF
+ALL
+
+# Consumer Staples
+PG
+KO
+PEP
+COST
+WMT
+TGT
+
+# Consumer Discretionary
+HD
+LOW
+MCD
+SBUX
+
+# Media / Telecom
+DIS
+CMCSA
+CHTR
+T
+VZ
+TMUS
+
+# Industrials / Defense
+BA
+RTX
+LMT
+GD
+NOC
+GE
+HON
+CAT
+DE
+MMM
+
+# Broad ETFs
+SPY
+QQQ
+IWM
+DIA
+
+# Sector ETFs
+XLF
+XLK
+XLE
+XLV
+XLI
+XLB
+
+# REITs
+AMT
+PLD
+CCI
+EQIX
+DLR
+O
+SPG
+VICI
+
+# Healthcare (not in TRAIN)
+CVS
+CI
+HCA
+UHS
+
+# Utilities
+NEE
+DUK
+SO
+D
+AEP
+EXC
+SRE

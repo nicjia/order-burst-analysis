@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────
+# Mean-Reverting Tickers — COI signal flipped ×(-1) (Reviewer R3)
+# ─────────────────────────────────────────────────────────────────
+# These stocks are structurally mean-reverting due to:
+#   - ETF arbitrage (XLF rebalancing creates mechanical reversals)
+#   - Statistical pairs trading (GS↔MS, JPM↔BAC, etc.)
+#   - Market-making in tight-tick names
+#
+# A buy-side burst in these stocks is NOT momentum — it's the
+# opening leg of a trade that will structurally unwind. The COI
+# score is inverted so the panel regression correctly captures
+# the reversal signal.
+# ─────────────────────────────────────────────────────────────────
+
+# Money-center / Investment banks
+JPM
+MS
+GS
+BAC
+C
+WFC
+
+# Regional / Diversified financials
+USB
+PNC
+SCHW
+AXP
+COF
+BK
+
+# Asset managers / Insurance
+BLK
+TROW
+IVZ
+BEN
+FNF
+ALL
+
+# Financial ETFs
+XLF

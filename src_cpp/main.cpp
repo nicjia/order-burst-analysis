@@ -734,6 +734,30 @@ int main(int argc, char* argv[]) {
     out.flush();
     out.close();
 
+    // ── Side-output: daily RTH traded volume CSV ──────────────
+    // This eliminates the need for a separate precompute_lob_volume.py pass.
+    // Output file: <output_file_stem>_adv.csv
+    {
+        std::string adv_file = output_file;
+        auto dot_pos = adv_file.rfind('.');
+        if (dot_pos != std::string::npos)
+            adv_file = adv_file.substr(0, dot_pos) + "_adv.csv";
+        else
+            adv_file += "_adv.csv";
+
+        std::ofstream adv_out(adv_file);
+        if (adv_out.is_open()) {
+            adv_out << "Ticker,Date,TradedVolume\n";
+            for (size_t i = 0; i < msg_files.size(); ++i) {
+                std::string date = extract_date(msg_files[i]);
+                adv_out << ticker << "," << date << "," << day_trade_volumes[i] << "\n";
+            }
+            adv_out.close();
+            std::cout << "ADV side-output: '" << adv_file << "' ("
+                      << msg_files.size() << " days)\n";
+        }
+    }
+
     auto t1 = std::chrono::steady_clock::now();
     double elapsed_sec = std::chrono::duration<double>(t1 - t0).count();
 

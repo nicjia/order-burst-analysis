@@ -1,0 +1,71 @@
+# ─────────────────────────────────────────────────────────────────
+# TRAIN Universe — ~50 stocks used ONLY for Optuna parameter tuning
+# ─────────────────────────────────────────────────────────────────
+# These tickers will NEVER appear in backtest or research results.
+# One ticker per line. Lines starting with # are comments.
+#
+# Selection criteria:
+#   - Diverse: mega-cap tech, financials, healthcare, energy, consumer
+#   - High liquidity: all have dense LOBSTER message files
+#   - Representative: covers momentum, mean-reversion, and mixed regimes
+# ─────────────────────────────────────────────────────────────────
+
+# Mega-cap Tech (Momentum)
+NVDA
+TSLA
+AMZN
+GOOG
+META
+NFLX
+
+# Semiconductors
+AMD
+INTC
+QCOM
+AVGO
+TXN
+MU
+AMAT
+LRCX
+KLAC
+MRVL
+SNPS
+CDNS
+
+# Financials (Mean-reverting)
+JPM
+MS
+GS
+BAC
+C
+WFC
+USB
+PNC
+SCHW
+AXP
+COF
+BK
+
+# Healthcare
+UNH
+JNJ
+PFE
+ABBV
+LLY
+MRK
+TMO
+ABT
+DHR
+BMY
+
+# Energy
+XOM
+CVX
+COP
+SLB
+EOG
+MPC
+VLO
+PSX
+HAL
+OXY
