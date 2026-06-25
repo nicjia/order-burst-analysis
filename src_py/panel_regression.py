@@ -37,10 +37,25 @@ Usage:
 import argparse
 import sys
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
+
+# Reuse the project's Newey-West HAC OLS (avoids duplicating the estimator).
+sys.path.append(str(Path(__file__).parent.absolute()))
+from beta_hedged_markout import newey_west_se
+
+# linearmodels is installed on Hoffman2 (setup_hoffman2.sh) but may be
+# absent in lighter local environments. Import-guard so the script still
+# runs with the hand-rolled Fama-MacBeth fallback below (Reviewer B4).
+try:
+    from linearmodels.panel import FamaMacBeth as _LMFamaMacBeth
+    import statsmodels.api as _sm  # noqa: F401 — presence check only
+    _HAS_LINEARMODELS = True
+except Exception:  # noqa: BLE001
+    _HAS_LINEARMODELS = False
 
 
 def load_burst_data(burst_dir, tickers, suffix="baseline_unfiltered"):
@@ -219,6 +234,94 @@ def fama_macbeth_regression(panel_df, y_col="fwd_return", x_cols=None):
     return results
 
 
+def fama_macbeth_linearmodels(panel_df, y_col="fwd_return", x_cols=None):
+    """
+    Fama-MacBeth via linearmodels.panel.FamaMacBeth (Reviewer B4).
+
+    Builds a MultiIndex (entity=Ticker, time=Date) panel and fits with
+    the library's built-in Newey-West-style time-series inference on the
+    cross-sectional coefficient path. Returns a results dict mirroring
+    the shape of fama_macbeth_regression() so the caller is agnostic.
+    """
+    if x_cols is None:
+        x_cols = ["COI"]
+
+    df = panel_df.dropna(subset=[y_col] + x_cols).copy()
+    if df["Date"].nunique() < 3 or len(df) < 10:
+        return None
+
+    df = df.set_index(["Ticker", "Date"])
+    exog = _sm.add_constant(df[x_cols])
+    try:
+        res = _LMFamaMacBeth(df[y_col], exog).fit()
+    except Exception:  # noqa: BLE001 — singular cross-sections etc.
+        return None
+
+    out = {}
+    name_map = {"const": "intercept"}
+    for name in exog.columns:
+        key = name_map.get(name, name)
+        out[key] = {
+            "mean": float(res.params[name]),
+            "nw_se": float(res.std_errors[name]),
+            "t_stat": float(res.tstats[name]),
+            "p_value": float(res.pvalues[name]),
+            "n_periods": int(df.index.get_level_values("Date").nunique()),
+            "nw_lag": "linearmodels",
+        }
+    return out
+
+
+def factor_adjust_long_short(ls_daily, factor_csv):
+    """
+    Regress the daily long-short (Q5-Q1) portfolio return on the
+    FF5 + MOM (+UMD) factors with Newey-West HAC errors (Reviewer B6 / M5).
+
+    ``ls_daily`` is a pd.Series indexed by integer Date (YYYYMMDD).
+    Returns a dict with alpha, factor loadings, t-stats, R², and the
+    annualized information ratio — or None if it can't be run.
+    """
+    if not factor_csv or not os.path.exists(factor_csv):
+        return None
+
+    factors = pd.read_csv(factor_csv)
+    date_col = "Date" if "Date" in factors.columns else (
+        "date" if "date" in factors.columns else None)
+    if date_col is None:
+        return None
+    factors[date_col] = factors[date_col].astype(int)
+    factors = factors.set_index(date_col)
+
+    factor_cols = [c for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA", "Mom", "UMD"]
+                   if c in factors.columns]
+    if not factor_cols:
+        return None
+
+    panel = pd.DataFrame({"ls": ls_daily}).join(factors[factor_cols], how="inner").dropna()
+    if len(panel) < 30:
+        return None
+
+    y = panel["ls"].values
+    X = np.column_stack([np.ones(len(y)), panel[factor_cols].values])
+    res = newey_west_se(y, X)
+
+    alpha = res["beta"][0]
+    resid_std = np.std(res["residuals"], ddof=1)
+    ir = (alpha / resid_std * np.sqrt(252.0)) if resid_std > 0 else 0.0
+    return {
+        "names": ["alpha"] + factor_cols,
+        "beta": res["beta"],
+        "se": res["se"],
+        "t_stat": res["t_stat"],
+        "p_value": res["p_value"],
+        "r_squared": res["r_squared"],
+        "nw_lags": res["nw_lags"],
+        "n_obs": res["n_obs"],
+        "alpha_ann": alpha * 252.0,
+        "info_ratio": ir,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Panel regression framework: COI, quintile sorts, Fama-MacBeth")
@@ -237,7 +340,12 @@ def main():
     ap.add_argument("--mean-revert-tickers", default="",
                     help="Comma-separated tickers whose COI should be inverted (×-1). "
                          "These are structurally mean-reverting stocks (e.g., financials) "
-                         "where burst momentum predicts reversal, not continuation.")
+                         "where burst momentum predicts reversal, not continuation. "
+                         "Fallback when --regime-csv is not supplied.")
+    ap.add_argument("--regime-csv", default=None,
+                    help="Optional regime_classifications.csv (from regime_classifier.py). "
+                         "Tickers with FlipSign=-1 get their COI inverted automatically, "
+                         "superseding --mean-revert-tickers (Reviewer R3).")
     ap.add_argument("--start-date", default=None)
     ap.add_argument("--end-date", default=None)
     ap.add_argument("--output-csv", default=None,
@@ -249,13 +357,29 @@ def main():
         t.strip() for t in args.mean_revert_tickers.split(",") if t.strip()
     )
 
+    # ── Reviewer R3: prefer the data-driven regime classification ──
+    # When a regime CSV is supplied, the mean-revert set is derived from
+    # FlipSign=-1 rather than the hand-curated --mean-revert-tickers list.
+    regime_source = "manual --mean-revert-tickers"
+    if args.regime_csv and os.path.exists(args.regime_csv):
+        regime_df = pd.read_csv(args.regime_csv)
+        if {"Ticker", "FlipSign"}.issubset(regime_df.columns):
+            mean_revert_set = set(
+                regime_df.loc[regime_df["FlipSign"] == -1, "Ticker"].astype(str)
+            )
+            regime_source = f"regime CSV ({args.regime_csv})"
+        else:
+            print(f"  Warning: {args.regime_csv} lacks Ticker/FlipSign columns; "
+                  f"falling back to --mean-revert-tickers")
+
     print(f"\n{'='*80}")
     print(f"  PANEL REGRESSION FRAMEWORK")
     print(f"  Tickers: {tickers}")
     print(f"  Burst dir: {args.burst_dir}")
     if mean_revert_set:
         active_mr = sorted(mean_revert_set & set(tickers))
-        print(f"  Mean-revert signal flip: {active_mr}")
+        print(f"  Mean-revert signal flip ({regime_source}): {active_mr}")
+    print(f"  Fama-MacBeth engine: {'linearmodels' if _HAS_LINEARMODELS else 'hand-rolled NW fallback'}")
     print(f"{'='*80}")
 
     # ── Load burst data ──
@@ -359,7 +483,14 @@ def main():
         print(f"\n  Running Fama-MacBeth cross-sectional regression...")
         print(f"  Model: R_{{i,t+1}} = α + β × COI_{{i,t}} + ε")
 
-        fm_results = fama_macbeth_regression(panel, y_col="fwd_return", x_cols=["COI"])
+        fm_results = None
+        if _HAS_LINEARMODELS:
+            fm_results = fama_macbeth_linearmodels(panel, y_col="fwd_return", x_cols=["COI"])
+            if fm_results:
+                print(f"  (engine: linearmodels.panel.FamaMacBeth)")
+        if fm_results is None:
+            fm_results = fama_macbeth_regression(panel, y_col="fwd_return", x_cols=["COI"])
+            print(f"  (engine: hand-rolled Newey-West Fama-MacBeth)")
 
         if fm_results:
             print(f"\n  {'='*70}")
@@ -435,6 +566,47 @@ def main():
             if 0 in quintile_means and 4 in quintile_means:
                 spread = quintile_means[4] - quintile_means[0]
                 print(f"\n  Long-Short Spread (Q5 - Q1): {spread:>+.2f} bps/day")
+
+                # ── Newey-West t-stat on the daily long-short series ──
+                pivot = (port_returns.groupby(["Date", "quintile"])["port_return"]
+                         .mean().unstack("quintile"))
+                if 0 in pivot.columns and 4 in pivot.columns:
+                    ls_daily = (pivot[4] - pivot[0]).dropna()
+                    if len(ls_daily) >= 10:
+                        y_ls = ls_daily.values
+                        X_ls = np.ones((len(y_ls), 1))
+                        nw = newey_west_se(y_ls, X_ls)
+                        print(f"  Long-Short NW t-stat: {nw['t_stat'][0]:>.2f}  "
+                              f"(mean {nw['beta'][0]*10000:+.2f} bps/day, "
+                              f"NW lags={nw['nw_lags']}, N={len(ls_daily)})")
+
+                        # ── FF5+MOM+UMD factor-adjusted alpha (Reviewer B6/M5) ──
+                        ls_idx = ls_daily.copy()
+                        ls_idx.index = ls_idx.index.astype(int)
+                        ff = factor_adjust_long_short(ls_idx, args.factor_csv)
+                        if ff is not None:
+                            print(f"\n  {'='*70}")
+                            print(f"  LONG-SHORT FACTOR-ADJUSTED ALPHA (FF5+MOM, NW HAC)")
+                            print(f"  {'='*70}")
+                            print(f"  {'Variable':<12} {'Coef':>12} {'NW SE':>12} "
+                                  f"{'t-stat':>10} {'p-value':>10}")
+                            print(f"  {'-'*70}")
+                            for i, name in enumerate(ff["names"]):
+                                sig = ""
+                                if ff["p_value"][i] < 0.01:
+                                    sig = " ***"
+                                elif ff["p_value"][i] < 0.05:
+                                    sig = " **"
+                                elif ff["p_value"][i] < 0.10:
+                                    sig = " *"
+                                print(f"  {name:<12} {ff['beta'][i]:>12.6f} "
+                                      f"{ff['se'][i]:>12.6f} {ff['t_stat'][i]:>10.2f} "
+                                      f"{ff['p_value'][i]:>10.4f}{sig}")
+                            print(f"  R²: {ff['r_squared']:.4f}  |  N: {ff['n_obs']}")
+                            print(f"  Annualized alpha: {ff['alpha_ann']*10000:+.2f} bps  "
+                                  f"|  Information Ratio: {ff['info_ratio']:.2f}")
+                        elif args.factor_csv:
+                            print(f"  (FF factor adjustment skipped — check --factor-csv columns)")
 
         else:
             print("  Insufficient data for quintile sorts (need ≥5 stocks per day).")

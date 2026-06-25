@@ -152,17 +152,220 @@ def compute_haircut_sharpe(observed_sharpe, n_trials, n_observations):
     return adjusted_sharpe
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Sharpe inference on a realized daily-PnL series (Reviewer M3 / Rec #4)
+# ─────────────────────────────────────────────────────────────────────────
+
+def lo_sharpe_se(daily_returns, q=None):
+    """
+    Lo (2002) autocorrelation-adjusted standard error of the annualized
+    Sharpe ratio.
+
+        SE(SR_ann) = sqrt(252) * sqrt((1 + 2*Σ_{k=1}^{q} rho_k) / T)
+
+    where rho_k is the lag-k autocorrelation of the (per-period) return
+    series.  ``q`` defaults to the Newey-West optimal bandwidth.
+
+    Returns (sharpe_ann, se_ann, q).
+    """
+    r = np.asarray(daily_returns, dtype=float)
+    r = r[np.isfinite(r)]
+    T = len(r)
+    if T < 3 or r.std(ddof=1) == 0:
+        return 0.0, np.nan, 0
+
+    sharpe_ann = (r.mean() / r.std(ddof=1)) * np.sqrt(252.0)
+
+    if q is None:
+        q = max(1, int(np.floor(4.0 * (T / 100.0) ** (2.0 / 9.0))))
+
+    correction = 1.0
+    for k in range(1, q + 1):
+        if T > k:
+            rho_k = np.corrcoef(r[k:], r[:-k])[0, 1]
+            if np.isfinite(rho_k):
+                correction += 2.0 * rho_k
+    correction = max(correction, 0.01)  # floor to avoid negative variance
+
+    se_ann = np.sqrt(252.0) * np.sqrt(correction / T)
+    return sharpe_ann, se_ann, q
+
+
+def deflated_sharpe_ratio(sharpe_ann, n_trials, n_obs, skew=0.0, kurt=3.0):
+    """
+    Deflated Sharpe Ratio (Bailey & López de Prado, 2014).
+
+    Probability that the observed Sharpe exceeds the expected maximum
+    Sharpe under the null of zero skill across ``n_trials`` independent
+    trials, accounting for non-normal returns (skewness γ3, kurtosis γ4)
+    and the finite sample length.
+
+    Returns (dsr_probability, expected_max_sharpe_ann).
+    """
+    from scipy.stats import norm
+
+    # Work in per-period (non-annualized) Sharpe.
+    sr = sharpe_ann / np.sqrt(252.0)
+
+    if n_trials <= 1 or n_obs <= 2:
+        return float("nan"), float("nan")
+
+    # Variance of the Sharpe estimator (Mertens / Lo, with higher moments).
+    var_sr = (1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr ** 2) / (n_obs - 1.0)
+    var_sr = max(var_sr, 1e-12)
+    sigma_sr = np.sqrt(var_sr)
+
+    # Expected maximum of N i.i.d. Sharpe estimates via extreme-value theory
+    # (Bailey-LdP). The EVT term is in standard-normal z-units; scale by the
+    # Sharpe estimator's std to convert to a Sharpe (per-period) threshold.
+    gamma = 0.5772156649  # Euler-Mascheroni
+    z1 = norm.ppf(1.0 - 1.0 / n_trials)
+    z2 = norm.ppf(1.0 - 1.0 / (n_trials * np.e))
+    e_max_z = (1.0 - gamma) * z1 + gamma * z2
+    sr_star = sigma_sr * e_max_z  # expected max Sharpe under the null (per-period)
+
+    dsr = norm.cdf((sr - sr_star) / sigma_sr)
+    return float(dsr), float(sr_star * np.sqrt(252.0))
+
+
+def block_bootstrap_ci(daily_pnl, n_boot=2000, block_len=None,
+                       alpha=0.05, seed=42):
+    """
+    Circular block bootstrap (Politis-Romano style) confidence intervals
+    for (i) cumulative PnL and (ii) mean per-period PnL, preserving the
+    autocorrelation structure of the daily series.
+
+    Returns dict with cum_lo/cum_hi/cum_point and mean_lo/mean_hi/mean_point.
+    """
+    x = np.asarray(daily_pnl, dtype=float)
+    x = x[np.isfinite(x)]
+    T = len(x)
+    if T < 5:
+        return None
+
+    if block_len is None:
+        block_len = max(1, int(round(T ** (1.0 / 3.0))))  # ~T^(1/3)
+
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(T / block_len))
+
+    cum_samples = np.empty(n_boot)
+    mean_samples = np.empty(n_boot)
+    for b in range(n_boot):
+        starts = rng.integers(0, T, size=n_blocks)
+        idx = (starts[:, None] + np.arange(block_len)[None, :]).ravel() % T
+        idx = idx[:T]
+        sample = x[idx]
+        cum_samples[b] = sample.sum()
+        mean_samples[b] = sample.mean()
+
+    lo_q, hi_q = 100.0 * (alpha / 2.0), 100.0 * (1.0 - alpha / 2.0)
+    return {
+        "block_len": block_len,
+        "n_boot": n_boot,
+        "cum_point": float(x.sum()),
+        "cum_lo": float(np.percentile(cum_samples, lo_q)),
+        "cum_hi": float(np.percentile(cum_samples, hi_q)),
+        "mean_point": float(x.mean()),
+        "mean_lo": float(np.percentile(mean_samples, lo_q)),
+        "mean_hi": float(np.percentile(mean_samples, hi_q)),
+    }
+
+
+def _load_daily_pnl(pnl_csv):
+    """Load a daily PnL series from either a debug-trades CSV (columns
+    'day' + 'net_raw') or a generic CSV with a single numeric PnL column."""
+    df = pd.read_csv(pnl_csv)
+    if "day" in df.columns and "net_raw" in df.columns:
+        df["day"] = pd.to_datetime(df["day"]).dt.strftime("%Y%m%d").astype(int)
+        return df.groupby("day")["net_raw"].sum().sort_index()
+    # Fallback: a column literally named pnl / daily_pnl / net
+    for col in ("daily_pnl", "pnl", "net", "net_raw"):
+        if col in df.columns:
+            return df[col].astype(float)
+    # Last resort: the last numeric column
+    num = df.select_dtypes(include=[np.number])
+    if num.shape[1] == 0:
+        return pd.Series(dtype=float)
+    return num.iloc[:, -1].astype(float)
+
+
+def run_pnl_inference(pnl_csv, n_trials):
+    """Print Lo-SE, Deflated-Sharpe, and block-bootstrap inference for a
+    realized daily-PnL series (Reviewer M3 / Rec #4)."""
+    from scipy.stats import skew as scipy_skew, kurtosis as scipy_kurt
+
+    daily = _load_daily_pnl(pnl_csv)
+    daily = daily[np.isfinite(daily)]
+    if len(daily) < 5:
+        print(f"  PnL inference skipped: only {len(daily)} daily observations in {pnl_csv}")
+        return
+
+    r = daily.values.astype(float)
+    T = len(r)
+
+    sharpe_ann, se_ann, q = lo_sharpe_se(r)
+    z = sharpe_ann / se_ann if (se_ann and np.isfinite(se_ann) and se_ann > 0) else np.nan
+    g3 = float(scipy_skew(r)) if T > 2 else 0.0
+    g4 = float(scipy_kurt(r, fisher=False)) if T > 3 else 3.0
+    dsr, e_max_sr = deflated_sharpe_ratio(sharpe_ann, n_trials, T, skew=g3, kurt=g4)
+    boot = block_bootstrap_ci(r)
+
+    print(f"\n{'='*100}")
+    print(f"  REALIZED-PnL SHARPE INFERENCE  (Reviewer M3 / Rec #4)")
+    print(f"  Source: {pnl_csv}")
+    print(f"  Trading days: {T}")
+    print(f"{'='*100}")
+    print(f"  Annualized Sharpe:            {sharpe_ann:.3f}")
+    print(f"  Lo (2002) SE (q={q} lags):     {se_ann:.3f}")
+    if np.isfinite(z):
+        ci_lo = sharpe_ann - 1.96 * se_ann
+        ci_hi = sharpe_ann + 1.96 * se_ann
+        print(f"  Sharpe 95% CI:                [{ci_lo:.3f}, {ci_hi:.3f}]   (z={z:.2f})")
+    print(f"  Return skew / kurtosis:       {g3:+.3f} / {g4:.3f}")
+    print(f"  Expected max Sharpe (N={n_trials}):  {e_max_sr:.3f}")
+    print(f"  Deflated Sharpe (prob real):  {dsr:.4f}")
+    if np.isfinite(dsr):
+        verdict = "SURVIVES" if dsr > 0.95 else "does NOT survive"
+        print(f"  → DSR {verdict} multiple-testing deflation at the 95% level")
+    if boot:
+        print(f"\n  Circular block bootstrap (block_len={boot['block_len']}, "
+              f"n_boot={boot['n_boot']}):")
+        print(f"    Cumulative PnL:  {boot['cum_point']:.2f}  "
+              f"95% CI [{boot['cum_lo']:.2f}, {boot['cum_hi']:.2f}]")
+        print(f"    Mean daily PnL:  {boot['mean_point']:.4f}  "
+              f"95% CI [{boot['mean_lo']:.4f}, {boot['mean_hi']:.4f}]")
+        spans_zero = boot['cum_lo'] <= 0 <= boot['cum_hi']
+        print(f"    → Cumulative-PnL CI {'INCLUDES' if spans_zero else 'excludes'} zero")
+    print(f"{'='*100}")
+
+
 def main():
     ap = argparse.ArgumentParser(
-        description="Multiple testing correction for Optuna p-values")
-    ap.add_argument("results_dir", help="Directory containing Optuna result JSONs")
+        description="Multiple testing correction + Sharpe inference (M3/M4)")
+    ap.add_argument("results_dir", nargs="?", default=None,
+                    help="Directory containing Optuna result JSONs (optional "
+                         "if --pnl-csv is given)")
     ap.add_argument("--all-tickers", action="store_true",
                     help="Search subdirectories for all tickers")
     ap.add_argument("--alpha", type=float, default=0.05,
                     help="Significance level (default: 0.05)")
     ap.add_argument("--n-trials", type=int, default=100,
-                    help="Number of Optuna trials per ticker (for Sharpe haircut)")
+                    help="Number of Optuna trials per ticker (for Sharpe haircut/DSR)")
+    ap.add_argument("--pnl-csv", default=None,
+                    help="Optional daily-PnL or debug-trades CSV: run Lo-SE, "
+                         "Deflated-Sharpe, and block-bootstrap inference on it")
     args = ap.parse_args()
+
+    # ── Realized-PnL Sharpe inference path (Reviewer M3 / Rec #4) ──
+    if args.pnl_csv:
+        run_pnl_inference(args.pnl_csv, args.n_trials)
+
+    if args.results_dir is None:
+        if not args.pnl_csv:
+            print("ERROR: provide a results_dir and/or --pnl-csv.")
+            sys.exit(1)
+        return
 
     # ── Load results ──
     results = load_optuna_results(args.results_dir, args.all_tickers)

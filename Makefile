@@ -25,5 +25,19 @@ all: $(TARGET)
 $(TARGET): $(SRCS)
 	$(CXX) $(CXXFLAGS) $(SRCS) -o $(TARGET)
 
+# ─────────────────────────────────────────────────────────────
+# Hoffman2 (UCLA HPC) convenience target.
+# Compute nodes need the GCC module loaded for a C++17 toolchain;
+# the login/system g++ is too old.  This re-invokes make for the
+# default `all` target after loading the module in the same shell.
+# Usage:  make hoffman2
+# ─────────────────────────────────────────────────────────────
+hoffman2:
+	. /u/local/Modules/default/init/bash && \
+	module load gcc/11.3.0 && \
+	$(MAKE) all
+
 clean:
 	rm -f $(TARGET)
+
+.PHONY: all hoffman2 clean

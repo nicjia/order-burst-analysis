@@ -28,6 +28,7 @@ from scipy.stats import spearmanr
 from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.inspection import permutation_importance
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -73,8 +74,21 @@ TARGET_MAP = {
 }
 
 
-def run_model(X_train, y_train, X_test, y_test, feat_names, label):
-    """Train SGDRegressor and evaluate."""
+def _spearman_score(y_true, y_pred):
+    """Scorer used for permutation importance: higher = better."""
+    rho, _ = spearmanr(y_true, y_pred)
+    return rho if np.isfinite(rho) else 0.0
+
+
+def run_model(X_train, y_train, X_test, y_test, feat_names, label,
+              compute_perm_importance=False):
+    """Train SGDRegressor and evaluate.
+
+    When ``compute_perm_importance`` is True, also compute sklearn
+    permutation importance on the held-out test fold (Reviewer Rec #2),
+    scored by Spearman ρ — a model-agnostic complement to the raw
+    coefficient magnitude (which can mislead under correlated features).
+    """
     scaler = StandardScaler()
     X_tr = scaler.fit_transform(X_train)
     X_te = scaler.transform(X_test)
@@ -109,10 +123,34 @@ def run_model(X_train, y_train, X_test, y_test, feat_names, label):
     print(f"  Sign accuracy:         {accuracy:.1f}%")
 
     # Top 10 features by coefficient magnitude
-    print(f"\n  Top 10 Features (|coef| after scaling):")
+    print(f"\n  Top {min(10, len(feat_names))} Features (|coef| after scaling):")
     for rank, idx in enumerate(sorted_idx[:10], 1):
         name = feat_names[idx] if idx < len(feat_names) else f"feat_{idx}"
         print(f"    {rank:2d}. {name:<30}  |coef|={coef_importance[idx]:.6f}")
+
+    perm_ranking = None
+    if compute_perm_importance and len(feat_names) > 1:
+        # Permutation importance against the Spearman scorer on the test fold.
+        from sklearn.metrics import make_scorer
+        scorer = make_scorer(_spearman_score)
+        try:
+            perm = permutation_importance(
+                model, X_te, y_test, scoring=scorer,
+                n_repeats=10, random_state=42, n_jobs=1,
+            )
+            perm_idx = np.argsort(perm.importances_mean)[::-1]
+            print(f"\n  Top 10 Features (permutation importance, Δ Spearman ρ):")
+            for rank, idx in enumerate(perm_idx[:10], 1):
+                name = feat_names[idx] if idx < len(feat_names) else f"feat_{idx}"
+                print(f"    {rank:2d}. {name:<30}  "
+                      f"Δρ={perm.importances_mean[idx]:+.6f} ± {perm.importances_std[idx]:.6f}")
+            perm_ranking = [
+                (feat_names[i], float(perm.importances_mean[i]),
+                 float(perm.importances_std[i]))
+                for i in perm_idx[:10]
+            ]
+        except Exception as exc:  # noqa: BLE001
+            print(f"  (permutation importance skipped: {exc})")
 
     return {
         "label": label,
@@ -121,6 +159,7 @@ def run_model(X_train, y_train, X_test, y_test, feat_names, label):
         "p_value": pval,
         "sign_accuracy": accuracy,
         "top_features": [(feat_names[i], coef_importance[i]) for i in sorted_idx[:10]],
+        "perm_importance": perm_ranking,
     }
 
 
@@ -213,11 +252,22 @@ def main():
     print(f"  Train months:            {len(train_months)}")
     print(f"  Test months:             {len(test_months)}")
 
-    # ── Run both models ──
+    # ── Direction-only model (Reviewer M2 / Rec #2) ──
+    # The single most important ablation the referee asked for: if a
+    # one-feature Direction model recovers most of the full-model ρ, the
+    # contribution simplifies to "filtered burst direction is a tradable
+    # overnight signal" — a cleaner (still publishable) framing.
+    if "Direction" in full_feats:
+        X_dironly = filtered[["Direction"]].fillna(0).values
+    else:
+        X_dironly = np.zeros((len(filtered), 1))
+
+    # ── Run the three models ──
     result_full = run_model(
         X_full[train_mask], y[train_mask],
         X_full[test_mask], y[test_mask],
-        full_feats, "FULL MODEL (All Features)"
+        full_feats, "FULL MODEL (All Features)",
+        compute_perm_importance=True,
     )
 
     result_ablated = run_model(
@@ -226,22 +276,37 @@ def main():
         ablated_feats, "ABLATED MODEL (No Direction)"
     )
 
+    result_dironly = run_model(
+        X_dironly[train_mask], y[train_mask],
+        X_dironly[test_mask], y[test_mask],
+        ["Direction"], "DIRECTION-ONLY MODEL (1 Feature)"
+    )
+
     # ── Summary comparison ──
-    print(f"\n{'='*70}")
+    print(f"\n{'='*90}")
     print(f"  ABLATION SUMMARY")
-    print(f"{'='*70}")
-    print(f"  {'Metric':<30} {'Full':<20} {'No Direction':<20}")
-    print(f"  {'-'*70}")
+    print(f"{'='*90}")
+    print(f"  {'Metric':<24} {'Full':<20} {'No Direction':<20} {'Direction-only':<20}")
+    print(f"  {'-'*90}")
 
     full_rho = result_full["spearman_rho"]
     abl_rho = result_ablated["spearman_rho"]
+    dir_rho = result_dironly["spearman_rho"]
     rho_drop = full_rho - abl_rho
     rho_pct_drop = (rho_drop / abs(full_rho) * 100.0) if full_rho != 0 else 0.0
+    # Fraction of the full-model ρ that Direction alone recovers.
+    dir_share = (dir_rho / full_rho * 100.0) if full_rho != 0 else 0.0
 
-    print(f"  {'Spearman ρ':<30} {full_rho:<20.6f} {abl_rho:<20.6f}")
-    print(f"  {'Sign Accuracy (%)':<30} {result_full['sign_accuracy']:<20.1f} {result_ablated['sign_accuracy']:<20.1f}")
-    print(f"  {'P-value':<30} {result_full['p_value']:<20.2e} {result_ablated['p_value']:<20.2e}")
-    print(f"\n  Direction removal impact on ρ: {rho_drop:+.6f} ({rho_pct_drop:+.1f}%)")
+    print(f"  {'Spearman ρ':<24} {full_rho:<20.6f} {abl_rho:<20.6f} {dir_rho:<20.6f}")
+    print(f"  {'Sign Accuracy (%)':<24} {result_full['sign_accuracy']:<20.1f} "
+          f"{result_ablated['sign_accuracy']:<20.1f} {result_dironly['sign_accuracy']:<20.1f}")
+    print(f"  {'P-value':<24} {result_full['p_value']:<20.2e} "
+          f"{result_ablated['p_value']:<20.2e} {result_dironly['p_value']:<20.2e}")
+    print(f"  {'# Features':<24} {result_full['n_features']:<20d} "
+          f"{result_ablated['n_features']:<20d} {result_dironly['n_features']:<20d}")
+
+    print(f"\n  Direction removal impact on ρ:    {rho_drop:+.6f} ({rho_pct_drop:+.1f}%)")
+    print(f"  Direction-only recovers:          {dir_share:.1f}% of full-model ρ")
 
     if abs(abl_rho) > 0 and result_ablated["p_value"] < 0.05:
         print(f"  → Non-direction features carry INDEPENDENT predictive weight (p < 0.05)")
@@ -250,7 +315,14 @@ def main():
     else:
         print(f"  → Direction appears to be the sole predictive feature")
 
-    print(f"{'='*70}")
+    if abs(dir_share) >= 80.0:
+        print(f"  → Direction-only explains ≥80% of ρ: framing simplifies to "
+              f"'filtered burst direction is a tradable overnight signal' (M2)")
+    else:
+        print(f"  → Direction-only explains <80% of ρ: high-dimensional framing is "
+              f"supported — engineered features add material predictive content")
+
+    print(f"{'='*90}")
 
 
 if __name__ == "__main__":

@@ -11,20 +11,27 @@
 #   ALL universe:  TRAIN ∪ OOS.  Used for data/perm (shared preprocessing).
 #
 # Phases:
-#   1. DATA:     Build burst CSVs from LOBSTER message files  (ALL tickers)
-#   2. PERM:     Compute permanence (forward returns)         (ALL tickers)
-#   3. OPTUNA:   Bayesian parameter sweep                     (TRAIN ONLY)
-#   4. BACKTEST: SGD walk-forward backtest                    (OOS ONLY)
-#   5. RESEARCH: Reviewer-required analysis scripts           (OOS ONLY)
+#   1.  DATA:      Build burst CSVs from LOBSTER message files  (ALL tickers)
+#   1b. HPC-DATA:  Same, but via the Hoffman2 SGE orchestrator   (500-ticker)
+#   2.  PERM:      Compute permanence (forward returns)          (ALL tickers)
+#   3.  OPTUNA:    Bayesian parameter sweep                      (TRAIN ONLY)
+#   4.  BACKTEST:  SGD walk-forward backtest                     (OOS ONLY)
+#   5.  RESEARCH:  Reviewer-required analysis scripts            (OOS ONLY)
+#   6.  AGGREGATE: Cross-sectional regime + COI panel + FF alpha (OOS ONLY)
 #
 # Usage:
-#   # Full pipeline (recommended):
+#   # Full local pipeline (recommended):
 #   ./run_pipeline.sh --phase all
+#
+#   # Full HPC pipeline (data via cluster orchestrator):
+#   ./run_pipeline.sh --phase hpc-all --cluster
 #
 #   # Individual phases:
 #   ./run_pipeline.sh --phase data
+#   ./run_pipeline.sh --phase hpc-data
 #   ./run_pipeline.sh --phase optuna
 #   ./run_pipeline.sh --phase research
+#   ./run_pipeline.sh --phase aggregate
 #
 #   # Override universe files:
 #   ./run_pipeline.sh --phase all --train-file universes/train_50.txt \
@@ -108,6 +115,11 @@ HAWKES_TAG=${HAWKES_TAG:-b1p0_i0p3}
 WORKERS=${WORKERS:-${NSLOTS:-4}}
 ROOT=${ROOT:-$(pwd)}
 
+# Aggregation / risk-adjustment inputs (Reviewer R3/R6/B6)
+FACTOR_CSV=${FACTOR_CSV:-data/ff5_mom_daily.csv}          # FF5+MOM daily factors
+REGIME_CSV=${REGIME_CSV:-results/regime/regime_classifications.csv}
+UNIVERSE_FILE=${UNIVERSE_FILE:-universes/full_500.txt}    # 500-ticker (ALL) universe
+
 # ── Parse arguments ───────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -124,15 +136,17 @@ done
 
 # ── Resolve ticker universes ─────────────────────────────────────────────
 resolve_tickers() {
+    # Universe files are one-ticker-per-line; '#' comments and blank lines are
+    # stripped, and only the first whitespace-delimited token per line is kept.
     if [ -n "${TRAIN_FILE}" ] && [ -f "${TRAIN_FILE}" ]; then
-        TRAIN_TICKERS=$(tr '\n' ' ' < "${TRAIN_FILE}" | xargs)
+        TRAIN_TICKERS=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "${TRAIN_FILE}" | awk '{print $1}' | tr '\n' ' ' | xargs)
         echo "INFO: Loaded TRAIN universe from ${TRAIN_FILE}"
     else
         TRAIN_TICKERS="${DEFAULT_TRAIN_TICKERS}"
     fi
 
     if [ -n "${OOS_FILE}" ] && [ -f "${OOS_FILE}" ]; then
-        OOS_TICKERS=$(tr '\n' ' ' < "${OOS_FILE}" | xargs)
+        OOS_TICKERS=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "${OOS_FILE}" | awk '{print $1}' | tr '\n' ' ' | xargs)
         echo "INFO: Loaded OOS universe from ${OOS_FILE}"
     else
         OOS_TICKERS="${DEFAULT_OOS_TICKERS}"
@@ -475,6 +489,17 @@ phase_research() {
     local mr_csv
     mr_csv=$(echo "${MEAN_REVERT_TICKERS}" | tr ' ' ',')
 
+    # Prefer the data-driven regime CSV (Reviewer R3) when present; the
+    # hardcoded --mean-revert-tickers list remains as a fallback. Add the
+    # FF5+MOM factor file for risk-adjusted long-short alpha when present.
+    local pr_regime_arg="" pr_factor_arg=""
+    if [ -f "${REGIME_CSV}" ]; then
+        pr_regime_arg="--regime-csv ${REGIME_CSV}"
+    fi
+    if [ -f "${FACTOR_CSV}" ]; then
+        pr_factor_arg="--factor-csv ${FACTOR_CSV}"
+    fi
+
     echo ""
     echo "[OOS] Panel regression (Fama-MacBeth, with signal flipping)..."
     python3 src_py/panel_regression.py \
@@ -483,6 +508,7 @@ phase_research() {
         --open-csv "${ROOT}/open_all.csv" \
         --close-csv "${ROOT}/close_all.csv" \
         --mean-revert-tickers "${mr_csv}" \
+        ${pr_regime_arg} ${pr_factor_arg} \
         --start-date "${OOS_START}" \
         --end-date "${OOS_END}" \
         --output-csv "${ROOT}/results/research/coi_panel_oos.csv" \
@@ -493,6 +519,82 @@ phase_research() {
     echo "  Research analysis complete. Results in: results/research/"
     echo "  ALL results are from the OOS universe (no data leakage)."
     echo "════════════════════════════════════════════════════════"
+}
+
+# ── Phase 1-HPC: HPC-DATA — delegate burst building to the cluster ───────
+# Replaces the local phase_data loop with the Hoffman2 batch orchestrator,
+# which rsyncs .7z files from lobster2, submits the SGE job array, verifies
+# per-ticker outputs, and cleans up staged data (plan Component 1).
+phase_hpc_data() {
+    echo ""
+    echo "════════════════════════════════════════════════════════"
+    echo "  Phase 1-HPC: HPC-DATA — Hoffman2 batch orchestration"
+    echo "  Universe: ${UNIVERSE_FILE} (500-ticker scale)"
+    echo "════════════════════════════════════════════════════════"
+
+    local orch="${ROOT}/hoffman2/master_orchestrator.sh"
+    if [ ! -x "${orch}" ]; then
+        echo "ERROR: missing or non-executable ${orch}"
+        echo "       (run hoffman2/setup_hoffman2.sh first, and launch this"
+        echo "        from a tmux session on the Hoffman2 DTN node)."
+        return 1
+    fi
+
+    echo "INFO: Delegating to ${orch}"
+    echo "      Run this inside tmux on the DTN; it blocks on qsub -sync y."
+    "${orch}"
+}
+
+# ── Phase 6: AGGREGATE — cross-sectional post-processing (OOS) ────────────
+# Runs after all per-ticker burst/permanence CSVs exist. Produces the
+# data-driven regime classification (Reviewer R3), the cross-sectional IC
+# distribution + COI panel (R6/B3/B4), and FF5+MOM risk-adjusted long-short
+# alpha (B6/M5).
+phase_aggregate() {
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "  Phase 6: AGGREGATE — cross-sectional results (OOS universe)"
+    echo "═══════════════════════════════════════════════════════════════════"
+
+    mkdir -p "${ROOT}/results/regime" "${ROOT}/results/aggregate"
+
+    local oos_csv
+    oos_csv=$(echo "${OOS_TICKERS}" | tr ' ' ',')
+
+    # 1. Data-driven regime classification (supersedes hardcoded list, R3)
+    echo "[AGG] Regime classification (rolling beta + burst-return corr + K-means)..."
+    python3 src_py/regime_classifier.py \
+        --burst-dir "${ROOT}/results/" \
+        --close-csv "${ROOT}/close_all.csv" \
+        --tickers "${oos_csv}" \
+        --output-dir "${ROOT}/results/regime" \
+        2>&1 | tee "${ROOT}/results/research/regime_classifier.log" || true
+
+    # 2. Cross-sectional aggregation + COI panel + FF-adjusted alpha
+    local factor_arg=""
+    if [ -f "${FACTOR_CSV}" ]; then
+        factor_arg="--factor-csv ${FACTOR_CSV}"
+    else
+        echo "[AGG] NOTE: ${FACTOR_CSV} not found — FF5+MOM adjustment will be skipped."
+    fi
+    local regime_arg=""
+    if [ -f "${REGIME_CSV}" ]; then
+        regime_arg="--regime-csv ${REGIME_CSV}"
+    fi
+
+    echo "[AGG] Aggregating cross-sectional results..."
+    python3 src_py/aggregate_results.py \
+        --results-dir "${ROOT}/results/" \
+        --tickers "${oos_csv}" \
+        --open-csv "${ROOT}/open_all.csv" \
+        --close-csv "${ROOT}/close_all.csv" \
+        ${regime_arg} ${factor_arg} \
+        --start-date "${OOS_START}" --end-date "${OOS_END}" \
+        --run-panel-regression \
+        2>&1 | tee "${ROOT}/results/research/aggregate_results.log"
+
+    echo ""
+    echo "  Aggregation complete. See results/aggregate/SUMMARY.md"
 }
 
 # ── Main dispatch ─────────────────────────────────────────────────────────
@@ -512,21 +614,32 @@ main() {
     resolve_tickers
 
     case "${PHASE}" in
-        data)     phase_data     ;;
-        perm)     phase_perm     ;;
-        optuna)   phase_optuna   ;;
-        backtest) phase_backtest ;;
-        research) phase_research ;;
+        data)      phase_data      ;;
+        hpc-data)  phase_hpc_data  ;;
+        perm)      phase_perm      ;;
+        optuna)    phase_optuna    ;;
+        backtest)  phase_backtest  ;;
+        research)  phase_research  ;;
+        aggregate) phase_aggregate ;;
         all)
             phase_data
             phase_perm
             phase_optuna
             phase_backtest
             phase_research
+            phase_aggregate
+            ;;
+        hpc-all)
+            phase_hpc_data
+            phase_perm
+            phase_optuna
+            phase_backtest
+            phase_research
+            phase_aggregate
             ;;
         *)
             echo "ERROR: Unknown phase '${PHASE}'"
-            echo "Valid phases: data, perm, optuna, backtest, research, all"
+            echo "Valid phases: data, hpc-data, perm, optuna, backtest, research, aggregate, all, hpc-all"
             exit 1
             ;;
     esac

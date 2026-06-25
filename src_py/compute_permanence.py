@@ -76,7 +76,10 @@ def main():
             bursts['BurstVolume'] = 1.0
 
     # ── Compute PeakImpact (still a valid feature) ───────────
-    bursts['PeakImpact'] = (bursts['PeakPrice'] - bursts['StartPrice']).abs()
+    # Reviewer M10: Add epsilon regularization to prevent D_b ratio explosion
+    # on zero-impact bursts where PeakPrice ≈ StartPrice.
+    PEAK_IMPACT_EPSILON = 0.0001  # $0.0001 = 1 cent / 100
+    bursts['PeakImpact'] = (bursts['PeakPrice'] - bursts['StartPrice']).abs().clip(lower=PEAK_IMPACT_EPSILON)
 
     # ── RTH safety filter (belt-and-suspenders with C++) ─────
     #  9:30 AM = 34200 SPM,  3:50 PM = 57000 SPM (10-min dead zone before 4:00 PM MOC)

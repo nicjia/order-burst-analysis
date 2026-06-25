@@ -1,0 +1,150 @@
+# ─────────────────────────────────────────────────────────────────
+# FULL Universe — combined train + OOS ticker list
+# ─────────────────────────────────────────────────────────────────
+# Built by unioning universes/train_50.txt + universes/oos_100.txt
+# (comments stripped, de-duplicated). One ticker per line; lines
+# beginning with '#' are comments.
+#
+# Addendum R6/B1: the publishable cross-sectional study targets the
+# ~500-name NASDAQ universe that lives on lobster2.math.ucla.edu. On
+# Hoffman2, hoffman2/master_orchestrator.sh materializes that full
+# list from the cluster manifest (lobster2:/lobster/manifest.csv) at
+# run time. This file is the version-controlled local stand-in
+# (currently ~128 names) and is what the pipeline uses when the
+# cluster manifest is unavailable. To scale to 500, append the extra
+# tickers reported by the manifest scan.
+#
+# NOTE: this file is the ALL universe (train ∪ OOS). The train/OOS
+# firewall in run_pipeline.sh is still enforced from train_50.txt /
+# oos_100.txt — do NOT feed this file as both --train-file and
+# --oos-file.
+# ─────────────────────────────────────────────────────────────────
+
+NVDA
+TSLA
+AMZN
+GOOG
+META
+NFLX
+AMD
+INTC
+QCOM
+AVGO
+TXN
+MU
+AMAT
+LRCX
+KLAC
+MRVL
+SNPS
+CDNS
+JPM
+MS
+GS
+BAC
+C
+WFC
+USB
+PNC
+SCHW
+AXP
+COF
+BK
+UNH
+JNJ
+PFE
+ABBV
+LLY
+MRK
+TMO
+ABT
+DHR
+BMY
+XOM
+CVX
+COP
+SLB
+EOG
+MPC
+VLO
+PSX
+HAL
+OXY
+AAPL
+MSFT
+ADBE
+CRM
+ORCL
+NOW
+PANW
+CRWD
+FTNT
+ZS
+V
+MA
+PYPL
+SQ
+HOOD
+SOFI
+LC
+BLK
+TROW
+IVZ
+BEN
+FNF
+ALL
+PG
+KO
+PEP
+COST
+WMT
+TGT
+HD
+LOW
+MCD
+SBUX
+DIS
+CMCSA
+CHTR
+T
+VZ
+TMUS
+BA
+RTX
+LMT
+GD
+NOC
+GE
+HON
+CAT
+DE
+MMM
+SPY
+QQQ
+IWM
+DIA
+XLF
+XLK
+XLE
+XLV
+XLI
+XLB
+AMT
+PLD
+CCI
+EQIX
+DLR
+O
+SPG
+VICI
+CVS
+CI
+HCA
+UHS
+NEE
+DUK
+SO
+D
+AEP
+EXC
+SRE
