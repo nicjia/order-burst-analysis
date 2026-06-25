@@ -89,7 +89,11 @@ def main():
         n_outside = (~rth_mask).sum()
         if n_outside > 0:
             print(f"Dropped {n_outside} bursts outside RTH [{RTH_START:.0f}, {RTH_END:.0f}]")
-            bursts = bursts[rth_mask].copy()
+            # MUST reset the index: the downstream CRSP lookup assigns via
+            # bursts.loc[ridx, ...] where ridx = np.where(mask)[0] are POSITIONAL
+            # indices. After filtering, a gappy label index makes .loc treat those
+            # positions as missing labels → KeyError. Resetting realigns label==position.
+            bursts = bursts[rth_mask].copy().reset_index(drop=True)
         else:
             print("RTH check: all bursts within regular trading hours ✓")
 
