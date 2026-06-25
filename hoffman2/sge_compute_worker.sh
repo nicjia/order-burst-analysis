@@ -85,8 +85,14 @@ if [ -s "${OUTPUT_CSV}" ]; then
 fi
 
 # ── Create temporary work directory ──────────────────────────────────────
-# Structure: $WORK_DIR/$TICKER/ contains all message CSVs for the parser
-WORK_DIR=$(mktemp -d "${SCRATCH}/tmp_burst_${TICKER}_XXXXXX")
+# Structure: $WORK_DIR/$TICKER/ contains all message CSVs for the parser.
+# Extract to NODE-LOCAL scratch ($TMPDIR, e.g. /work/<job>, ~hundreds of GB,
+# auto-removed by SGE at job end) instead of the shared $SCRATCH quota: a
+# single big ticker's full multi-year history is ~400 GB uncompressed, which
+# would otherwise contend on (and could blow) the 2 TB shared quota when many
+# workers run concurrently. Falls back to $SCRATCH if $TMPDIR is unset.
+WORK_BASE="${TMPDIR:-${SCRATCH}}"
+WORK_DIR=$(mktemp -d "${WORK_BASE}/tmp_burst_${TICKER}_XXXXXX")
 EXTRACT_DIR="${WORK_DIR}/${TICKER}"
 mkdir -p "${EXTRACT_DIR}"
 
