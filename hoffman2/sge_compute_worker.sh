@@ -105,30 +105,45 @@ echo "[${TICKER}] Scanning staging area for .7z files..."
 ARCHIVE_COUNT=0
 EXTRACT_ERRORS=0
 
-# Find all .7z files for this ticker across all years
-find "${STAGING_DIR}" -name "${TICKER}.7z" 2>/dev/null | sort | while read -r ARCHIVE_PATH; do
-    # Extract the date from the directory path
-    # Path format: .../lobster/YEAR/YYYYMMDD/TICKER.7z
-    DATE_DIR=$(basename "$(dirname "${ARCHIVE_PATH}")")
+# Pick an extractor ONCE. Native 7z/7za are preferred; py7zr (pure-Python,
+# installed into the venv by setup_hoffman2.sh) is the fallback when no
+# native binary exists on the compute nodes.
+# NOTE: this runs in the MAIN shell (not a `find | while` subshell) so that a
+# missing-extractor `exit 1` actually terminates the worker instead of being
+# swallowed and silently producing an empty "no data" output.
+EXTRACTOR=""
+if command -v 7z &>/dev/null; then
+    EXTRACTOR="7z"
+elif command -v 7za &>/dev/null; then
+    EXTRACTOR="7za"
+elif python3 -c "import py7zr" 2>/dev/null; then
+    EXTRACTOR="py7zr"
+else
+    echo "[${TICKER}] ERROR: no 7z/7za binary and no py7zr module available."
+    echo "[${TICKER}]        Run hoffman2/setup_hoffman2.sh first."
+    exit 1
+fi
+echo "[${TICKER}] Extractor: ${EXTRACTOR}"
 
-    # Extract only message files (and orderbook for potential future use)
-    if command -v 7z &>/dev/null; then
-        7z x "${ARCHIVE_PATH}" -o"${EXTRACT_DIR}" -y >/dev/null 2>&1 || {
-            echo "[${TICKER}] WARNING: Failed to extract ${ARCHIVE_PATH}"
-            ((EXTRACT_ERRORS++)) || true
-        }
-    elif command -v 7za &>/dev/null; then
-        7za x "${ARCHIVE_PATH}" -o"${EXTRACT_DIR}" -y >/dev/null 2>&1 || {
-            echo "[${TICKER}] WARNING: Failed to extract ${ARCHIVE_PATH}"
-            ((EXTRACT_ERRORS++)) || true
-        }
-    else
-        echo "[${TICKER}] ERROR: 7z not found! Run setup_hoffman2.sh first."
-        exit 1
+extract_one() {
+    # $1 = archive path, $2 = destination dir
+    case "${EXTRACTOR}" in
+        7z)    7z  x "$1" -o"$2" -y >/dev/null 2>&1 ;;
+        7za)   7za x "$1" -o"$2" -y >/dev/null 2>&1 ;;
+        py7zr) python3 -m py7zr x "$1" "$2/" >/dev/null 2>&1 ;;
+    esac
+}
+
+# Extract every archive for this ticker (process substitution → main shell).
+while IFS= read -r ARCHIVE_PATH; do
+    if ! extract_one "${ARCHIVE_PATH}" "${EXTRACT_DIR}"; then
+        echo "[${TICKER}] WARNING: Failed to extract ${ARCHIVE_PATH}"
+        EXTRACT_ERRORS=$((EXTRACT_ERRORS + 1))
     fi
+    ARCHIVE_COUNT=$((ARCHIVE_COUNT + 1))
+done < <(find "${STAGING_DIR}" -name "${TICKER}.7z" 2>/dev/null | sort)
 
-    ((ARCHIVE_COUNT++)) || true
-done
+echo "[${TICKER}] Processed ${ARCHIVE_COUNT} archive(s), ${EXTRACT_ERRORS} extraction error(s)"
 
 # Count extracted message files
 MSG_FILE_COUNT=$(find "${EXTRACT_DIR}" -name "*message*" -name "*.csv" 2>/dev/null | wc -l)
