@@ -234,16 +234,25 @@ def main():
     min_vol_per_burst = (args.vol_frac * burst_adv).reindex(df.index)
 
     # 2. APPLY GRAND UNIVERSAL FILTERS
-    print("Applying Grand Universal geometry structural rules...")
+    # ── CRITICAL ANTI-BIAS FIX (Referee M3/M6) ──
+    # Kappa is a forward-looking metric (D_b uses future mid-prices).
+    # Applying kappa to the ENTIRE dataset before splitting is LOOK-AHEAD BIAS.
+    # Instead:
+    #   - Apply kappa=0 to the full dataset (keep all bursts)
+    #   - Only apply kappa filtering to the TRAINING window during burn-in
+    #   - Predict on ALL bursts; the model learns to identify informational vs noise
+    print("Applying Grand Universal geometry structural rules (kappa=0 for OOS integrity)...")
     filtered = classify_and_filter(
         df,
         min_vol=0, # Absolute volume is ignored
         dir_thresh=args.dir_thresh,
         vol_ratio=args.vol_ratio,
-        kappa=args.kappa,
+        kappa=0.0,  # NEVER pre-filter by kappa — that's look-ahead bias
         require_directional=False,
         min_vol_per_burst=min_vol_per_burst
     )
+    # Store the user's kappa for training-only filtering below
+    training_kappa = args.kappa
     
     # Strictly isolate the correct silence frame requested (assuming Pre-Filtering rules or manually filtering based on existing Delay times)
     # The dataset needs to have pre-calculated 'delay' logic mapped to s0p5, s1p0, etc. 
@@ -360,11 +369,24 @@ def main():
     )
     
     scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
+
+    # ── ANTI-BIAS FIX: Apply kappa ONLY to the training window ──
+    # The training set can use kappa because D_b is computed from known past data.
+    # But we must NOT apply kappa to the test day — that would leak future info.
+    if training_kappa > 0.0 and 'D_b' in filtered.columns:
+        train_kappa_mask = train_mask & (filtered['D_b'].values >= training_kappa) & filtered['D_b'].notna().values
+        X_train_k = X[train_kappa_mask]
+        y_train_k = y[train_kappa_mask]
+        print(f"  Training kappa filter: {training_kappa} → {len(y_train_k)}/{len(y_train)} train bursts retained")
+    else:
+        X_train_k = X_train
+        y_train_k = y_train
+
+    X_train_s = scaler.fit_transform(X_train_k)
     
     if len(X_train_s) > 0:
-        model.partial_fit(X_train_s, y_train)
-        print(f"Burn-in initialized precisely over {len(X_train)} chronological bursts ending {str(initial_burn_end_date).split(' ')[0]}.")
+        model.partial_fit(X_train_s, y_train_k)
+        print(f"Burn-in initialized precisely over {len(X_train_k)} chronological bursts ending {str(initial_burn_end_date).split(' ')[0]}.")
     else:
         print("No bursts found inside the initial burn-in window!")
         sys.exit(1)
@@ -490,6 +512,7 @@ def main():
         spread_exit_day = None
         
         # 1. Transform strictly off yesterday's scaler weights (No Peeking at today!)
+        # ── ANTI-BIAS GUARD: Even with --adaptive-scaler, predictions use YESTERDAY's scaler ──
         X_day_s = scaler.transform(X_day)
         
         # 2. Predict today's permanence identically blind
@@ -912,6 +935,46 @@ def main():
     if std_daily_pnl > 0:
         sharpe_ratio = (mean_daily_pnl / std_daily_pnl) * np.sqrt(252)
 
+    # ── Lo (2002) Sharpe Ratio Standard Error ──
+    # Accounts for autocorrelation in daily PnL returns.
+    # SE(SR) = sqrt((1 + 2*sum_{k=1}^{q} rho_k) / T)
+    T_days = len(daily_pnls)
+    lo_q = max(1, int(np.floor(4.0 * (T_days / 100.0) ** (2.0 / 9.0))))  # Newey-West optimal bandwidth
+    lo_correction = 1.0
+    if T_days > lo_q + 1:
+        for lag in range(1, lo_q + 1):
+            if T_days > lag:
+                rho_k = np.corrcoef(daily_pnls[lag:], daily_pnls[:-lag])[0, 1]
+                if np.isfinite(rho_k):
+                    lo_correction += 2.0 * rho_k
+    lo_correction = max(lo_correction, 0.01)  # floor to prevent negative variance
+    sharpe_se = np.sqrt(lo_correction / max(T_days, 1))
+    sharpe_ci_lo = sharpe_ratio - 1.96 * sharpe_se * np.sqrt(252)
+    sharpe_ci_hi = sharpe_ratio + 1.96 * sharpe_se * np.sqrt(252)
+
+    # ── Deflated Sharpe Ratio (Bailey & López de Prado, 2014) ──
+    # Adjusts for multiple testing (number of Optuna trials).
+    # DSR = Prob(SR > SR*) where SR* = expected max SR under null with N trials.
+    # NOTE: all quantities here are in PER-PERIOD (daily) Sharpe units.
+    # sharpe_se is the per-period Sharpe estimator std (Lo 2002); the EVT
+    # expected-max is in standard-normal z-units, so SR* = sharpe_se * z_max.
+    from scipy.stats import norm
+    n_trials_tested = 100  # Default Optuna trials; adjust if known
+    euler_mascheroni = 0.5772156649
+    sr_per_period = sharpe_ratio / np.sqrt(252)
+    if n_trials_tested > 1:
+        e_max_z = (1.0 - euler_mascheroni) * norm.ppf(1.0 - 1.0 / n_trials_tested) + \
+                  euler_mascheroni * norm.ppf(1.0 - 1.0 / (n_trials_tested * np.e))
+    else:
+        e_max_z = 0.0
+    sr_star_pp = sharpe_se * e_max_z  # expected max Sharpe under the null
+    if sharpe_se > 0:
+        deflated_sr_prob = norm.cdf((sr_per_period - sr_star_pp) / sharpe_se)
+        deflated_sr_pval = 1.0 - deflated_sr_prob  # prob under the null
+    else:
+        deflated_sr_prob = 0.0
+        deflated_sr_pval = 1.0
+
     print("\n" + "="*80)
     print("  SIMULATION COMPLETE (OUT-OF-SAMPLE REGIME RESULTS)")
     print("="*80)
@@ -933,6 +996,13 @@ def main():
     print(f"  Daily Mean PnL ({args.pnl_space}):         {mean_daily_pnl:.5f}")
     print(f"  Daily StdDev ({args.pnl_space}):           {std_daily_pnl:.5f}")
     print(f"  Annualized Sharpe Ratio:      {sharpe_ratio:.2f}")
+    print(f"  Lo (2002) Sharpe SE:          {sharpe_se * np.sqrt(252):.4f}  (q={lo_q} lags)")
+    print(f"  Sharpe 95% CI:                [{sharpe_ci_lo:.2f}, {sharpe_ci_hi:.2f}]")
+    print(f"  Deflated Sharpe p-value:      {deflated_sr_pval:.4f}  (N_trials={n_trials_tested})")
+    if deflated_sr_pval < 0.05:
+        print(f"  → Sharpe ratio SURVIVES multiple-testing adjustment at 5% level")
+    else:
+        print(f"  → Sharpe ratio does NOT survive multiple-testing adjustment")
 
     if signal_evals > 0:
         print("\n  Signal Diagnostics")

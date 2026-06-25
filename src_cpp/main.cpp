@@ -310,13 +310,37 @@ int main(int argc, char* argv[]) {
     // For first day(s) with no prior history, bootstrap with current day volume.
     const size_t ADV_WINDOW = 14;
     std::vector<long long> day_trade_volumes(msg_files.size(), 0);
+    
+    // Parallelize the trade volume pre-computation
+    {
+        int nthreads_pre = std::min<int>(workers, (int)msg_files.size());
+        std::atomic<size_t> next_idx_pre{0};
+        std::atomic<size_t> done_pre{0};
+        std::vector<std::thread> pool_pre;
+        pool_pre.reserve(nthreads_pre);
+        for (int t = 0; t < nthreads_pre; ++t) {
+            pool_pre.emplace_back([&]() {
+                while (true) {
+                    size_t i = next_idx_pre.fetch_add(1);
+                    if (i >= msg_files.size()) break;
+                    day_trade_volumes[i] = compute_rth_trade_volume(msg_files[i], rth_start, rth_end);
+                    size_t d = done_pre.fetch_add(1) + 1;
+                    if (d % 20 == 0) {
+                        std::cout << "[ADV Precompute] " << d << "/" << msg_files.size() << " days done..." << std::endl;
+                    }
+                }
+            });
+        }
+        for (auto& th : pool_pre) th.join();
+        std::cout << "[ADV Precompute] Completed all " << msg_files.size() << " days." << std::endl;
+    }
+
     std::vector<double> day_min_volume_thresholds(msg_files.size(), 0.0);
     std::deque<long long> adv_history;
     long long adv_history_sum = 0;
 
     for (size_t i = 0; i < msg_files.size(); ++i) {
-        long long day_vol = compute_rth_trade_volume(msg_files[i], rth_start, rth_end);
-        day_trade_volumes[i] = day_vol;
+        long long day_vol = day_trade_volumes[i];
 
         double trailing_adv = 0.0;
         if (!adv_history.empty()) {
@@ -377,7 +401,9 @@ int main(int argc, char* argv[]) {
         {
             std::lock_guard<std::mutex> lk(log_mutex);
             std::cout << "[start " << (day_idx + 1) << "/" << total_days << "] "
-                      << day_res.date << " thread=" << std::this_thread::get_id() << "\n";
+                      << day_res.date << " thread=" << std::this_thread::get_id()
+                      << " min_vol=" << std::fixed << std::setprecision(1)
+                      << day_min_volume_thresholds[day_idx] << "\n";
         }
 
         // Fresh book & detector per day (pre-open rebuilds the book)
@@ -395,9 +421,6 @@ int main(int argc, char* argv[]) {
         // Mid-price snapshots: only recorded when mid actually changes.
         // Used after the day loop for forward-return lookups.
         std::vector<std::pair<double, double>> mid_snapshots;
-            std::cout << "        rolling_min_volume=" << std::fixed << std::setprecision(2)
-                      << day_min_volume_thresholds[day_idx]
-                      << " (rth_day_volume=" << day_trade_volumes[day_idx] << ")\n";
         mid_snapshots.reserve(500000);
         std::vector<BboSnapshot> bbo_snapshots;
         bbo_snapshots.reserve(500000);
