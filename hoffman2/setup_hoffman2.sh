@@ -47,10 +47,17 @@ echo ""
 # ── 2. Create Python virtual environment ─────────────────────────────────
 echo "── Step 2: Creating Python virtual environment ──"
 VENV_DIR="${ROOT}/.venv"
-if [ -d "${VENV_DIR}" ]; then
-    echo "  Venv already exists at ${VENV_DIR}"
+# A venv records an absolute interpreter path; if it was built against a
+# python module that is no longer loaded, its interpreter dangles and every
+# pip/python call fails with "bad interpreter". Detect that and rebuild.
+if [ -d "${VENV_DIR}" ] && "${VENV_DIR}/bin/python3" -c "import sys" 2>/dev/null; then
+    echo "  Venv already exists and is functional at ${VENV_DIR}"
     source "${VENV_DIR}/bin/activate"
 else
+    if [ -d "${VENV_DIR}" ]; then
+        echo "  Existing venv is broken (dangling interpreter) — recreating..."
+        rm -rf "${VENV_DIR}"
+    fi
     python3 -m venv "${VENV_DIR}"
     source "${VENV_DIR}/bin/activate"
     echo "  Created venv at ${VENV_DIR}"
@@ -58,6 +65,8 @@ fi
 
 echo "  Installing Python dependencies..."
 pip install --upgrade pip setuptools wheel 2>&1 | tail -1
+# py7zr is a pure-Python .7z extractor used as a fallback by the SGE worker
+# when no native 7z/7za binary is available on the compute nodes.
 pip install \
     numpy \
     pandas \
@@ -65,6 +74,7 @@ pip install \
     scikit-learn \
     statsmodels \
     linearmodels \
+    py7zr \
     2>&1 | tail -5
 
 # Verify critical imports
@@ -144,6 +154,21 @@ else
         ln -sf "${P7ZIP_DIR}/bin/7za" "${HOME}/bin/7z"
         export PATH="${HOME}/bin:${PATH}"
     fi
+fi
+echo ""
+
+# ── 4b. Confirm an extractor is usable (native OR py7zr) ─────────────────
+echo "── Step 4b: Confirming a .7z extractor is available ──"
+if command -v 7z &>/dev/null; then
+    echo "  ✓ native 7z available ($(command -v 7z))"
+elif command -v 7za &>/dev/null; then
+    echo "  ✓ native 7za available ($(command -v 7za))"
+elif python3 -c "import py7zr" 2>/dev/null; then
+    echo "  ✓ py7zr (pure-Python) available — the SGE worker will use it"
+else
+    echo "  ERROR: no native 7z/7za and py7zr import failed."
+    echo "         Extraction will fail. Fix before launching the pipeline."
+    exit 1
 fi
 echo ""
 
