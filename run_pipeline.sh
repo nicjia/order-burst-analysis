@@ -104,7 +104,11 @@ TAU_MAX=${TAU_MAX:-10.0}
 TRAIN_START=${TRAIN_START:-2023-01-01}
 TRAIN_END=${TRAIN_END:-2024-12-31}
 OOS_START=${OOS_START:-2019-01-01}
-OOS_END=${OOS_END:-2024-12-31}
+# Extends to 2026 to use all available burst data. NOTE: the effective OOS
+# window is currently capped at 2024-12-30 by CRSP price coverage (open_all/
+# close_all) — overnight CLOP/CLCL targets are NaN beyond that. Refresh the
+# CRSP matrices through 2026 to actually gain the extra ~13 months of power.
+OOS_END=${OOS_END:-2026-12-31}
 
 # Optuna
 OPTUNA_TRIALS=${OPTUNA_TRIALS:-100}

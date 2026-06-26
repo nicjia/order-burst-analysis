@@ -28,7 +28,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_TH
 JOBS=${JOBS:-${NSLOTS:-12}}
 export TARGET=${TARGET:-reg_clop} HTAG=${HTAG:-b1p0_i0p5}
 export TRAIN_START=${TRAIN_START:-2023-01-01} TRAIN_END=${TRAIN_END:-2024-12-31}
-export OOS_START=${OOS_START:-2019-01-01}     OOS_END=${OOS_END:-2024-12-31}
+export OOS_START=${OOS_START:-2019-01-01}     OOS_END=${OOS_END:-2026-12-31}
 export TRIALS=${TRIALS:-100}
 
 mapfile -t TRAIN < <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' universes/train_50.txt | awk '{print $1}')
