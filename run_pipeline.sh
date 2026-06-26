@@ -269,6 +269,13 @@ phase_perm() {
             continue
         fi
 
+        # Skip empty baselines (no-data sentinels / 0-burst tickers) — otherwise
+        # compute_permanence errors on an empty frame and aborts the whole phase.
+        if [ "$(wc -l < "${raw_csv}")" -le 1 ]; then
+            echo "[${ticker}] SKIP: empty baseline (no bursts)"
+            continue
+        fi
+
         # Skip if already computed
         if [ -s "${unfiltered}" ] && [ -s "${filtered}" ]; then
             echo "[${ticker}] SKIP: permanence files already exist"
@@ -428,6 +435,10 @@ phase_research() {
             echo "SKIP: Missing ${unfiltered}"
             continue
         fi
+
+        # Only pass --filtered if the kappa-filtered file actually exists;
+        # otherwise the research scripts try to read a missing path and crash.
+        [ -f "${filtered}" ] || filtered=""
 
         echo ""
         echo "──── Research Analysis: ${ticker} (OOS) ────"
