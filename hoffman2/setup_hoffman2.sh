@@ -74,6 +74,8 @@ pip install \
     scikit-learn \
     statsmodels \
     linearmodels \
+    optuna \
+    matplotlib \
     py7zr \
     2>&1 | tail -5
 
