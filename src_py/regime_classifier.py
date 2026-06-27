@@ -44,7 +44,14 @@ def load_burst_returns(burst_dir, tickers, close_csv, suffix="baseline_unfiltere
         if not os.path.exists(path):
             continue
 
-        df = pd.read_csv(path)
+        # Read only the columns we need (Date/Direction/Volume) to stay
+        # memory-bounded across a 400+ ticker universe.
+        try:
+            avail = pd.read_csv(path, nrows=0).columns
+        except Exception:  # noqa: BLE001
+            continue
+        cols = [c for c in ["Date", "Direction", "Volume"] if c in avail]
+        df = pd.read_csv(path, usecols=cols)
         if df.empty or "Direction" not in df.columns:
             continue
 

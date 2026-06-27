@@ -61,12 +61,21 @@ except Exception:  # noqa: BLE001
 def load_burst_data(burst_dir, tickers, suffix="baseline_unfiltered"):
     """Load burst CSVs for multiple tickers into a single DataFrame."""
     frames = []
+    # Only the columns COI needs — keeps memory bounded across a large
+    # (400+ ticker) universe where full burst CSVs total tens of GB.
+    needed = ["Date", "Ticker", "Direction", "Volume"]
     for ticker in tickers:
         path = os.path.join(burst_dir, f"bursts_{ticker}_{suffix}.csv")
         if not os.path.exists(path):
             print(f"  Warning: Missing {path}, skipping {ticker}")
             continue
-        df = pd.read_csv(path)
+        try:
+            avail = pd.read_csv(path, nrows=0).columns
+        except Exception:  # noqa: BLE001 — empty/corrupt sentinel files
+            print(f"  Warning: unreadable {path}, skipping {ticker}")
+            continue
+        cols = [c for c in needed if c in avail]
+        df = pd.read_csv(path, usecols=cols)
         try:
             df["Date"] = df["Date"].astype(int)
         except (ValueError, TypeError):
