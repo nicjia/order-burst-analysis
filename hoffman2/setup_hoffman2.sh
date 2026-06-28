@@ -77,6 +77,7 @@ pip install \
     optuna \
     matplotlib \
     py7zr \
+    requests \
     2>&1 | tail -5
 
 # Verify critical imports
