@@ -50,7 +50,9 @@ def fetch_polygon_daily(ticker, api_key, start_date, end_date):
 
 def main():
     ap = argparse.ArgumentParser(description="Fetch 2025-2026 prices from Polygon.io")
-    ap.add_argument("--api-key", required=True, help="Polygon.io API key")
+    ap.add_argument("--api-key",
+                    default=os.environ.get("MASSIVE_API_KEY") or os.environ.get("POLYGON_API_KEY"),
+                    help="API key (or set MASSIVE_API_KEY env var so it isn't exposed in ps)")
     ap.add_argument("--start-date", default="2025-01-01")
     ap.add_argument("--end-date", default="2026-12-31")
     ap.add_argument("--universe", default="universes/full_500.txt")
@@ -62,6 +64,8 @@ def main():
                     help="Skip rate limiting (paid Polygon tier)")
     ap.add_argument("--output-dir", default=".", help="Output directory")
     args = ap.parse_args()
+    if not args.api_key:
+        ap.error("provide --api-key or set MASSIVE_API_KEY / POLYGON_API_KEY env var")
 
     tickers = load_universe(args.universe)
     print(f"Fetching {args.start_date} → {args.end_date} for {len(tickers)} tickers")
