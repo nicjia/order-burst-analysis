@@ -27,16 +27,29 @@ def load_universe(path="universes/full_500.txt"):
     return tickers
 
 
-def fetch_polygon_daily(ticker, api_key, start_date, end_date):
-    """Fetch daily OHLC bars from Polygon.io Aggregates endpoint."""
+def fetch_polygon_daily(ticker, api_key, start_date, end_date, max_retries=5):
+    """Fetch daily OHLC bars from Polygon.io Aggregates endpoint.
+
+    Retries on HTTP 429 (free tier = 5 calls/min) honoring Retry-After, so a
+    long unattended run recovers from rate-limit hits instead of dropping the
+    ticker.
+    """
     url = (
         f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/day/"
         f"{start_date}/{end_date}"
         f"?adjusted=true&sort=asc&limit=50000&apiKey={api_key}"
     )
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+    for attempt in range(max_retries):
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("Retry-After", 0) or 0)
+            time.sleep(max(wait, 15))
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        break
+    else:
+        raise RuntimeError(f"{ticker}: still rate-limited (429) after {max_retries} retries")
 
     if "results" not in data or len(data["results"]) == 0:
         return None, None
@@ -94,9 +107,10 @@ def main():
             failed += 1
             print(f"  [{i}/{len(tickers)}] ✗ {ticker}: {e}")
 
-        # Rate limit: free tier = 5 calls/min → 12s between calls
+        # Rate limit: free tier = 5 calls/min. Use 13s (not 12) to stay safely
+        # under the rolling-window limit and reduce 429s.
         if not args.paid_tier:
-            time.sleep(12)
+            time.sleep(13)
 
     print(f"\nDone: {success} success, {no_data} no data, {failed} failed")
 
