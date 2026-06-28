@@ -20,9 +20,14 @@ N=$(echo "$TK" | tr ',' '\n' | grep -c .)
 echo "=== FULL-UNIVERSE PANEL — $N tickers — $(date) host=$(hostname) ==="
 
 echo "--- regime classification (universe-wide R3 sign-flip) ---"
-python3 src_py/regime_classifier.py --burst-dir results/ --close-csv close_all.csv \
-   --tickers "$TK" --output-dir results/regime > results/research/regime_full.log 2>&1 \
-   && echo "regime OK" || echo "regime FAILED (see results/research/regime_full.log)"
+if [ -s results/regime/regime_classifications.csv ] && \
+   [ "$(tail -n +2 results/regime/regime_classifications.csv | wc -l)" -ge 400 ]; then
+  echo "regime already covers $(tail -n +2 results/regime/regime_classifications.csv | wc -l) tickers — skipping"
+else
+  python3 src_py/regime_classifier.py --burst-dir results/ --close-csv close_all.csv \
+     --tickers "$TK" --output-dir results/regime > results/research/regime_full.log 2>&1 \
+     && echo "regime OK" || echo "regime FAILED (see results/research/regime_full.log)"
+fi
 
 echo "--- panel regression (COI Fama-MacBeth + quintile + FF if available) ---"
 python3 src_py/panel_regression.py --burst-dir results/ --tickers "$TK" \
