@@ -98,39 +98,38 @@ def compute_daily_coi(bursts_df, vol_frac_thresh=0.0, dir_thresh=0.7):
 
     Returns a DataFrame with columns: [Date, Ticker, COI, n_buy, n_sell, total_vol]
     """
-    # Basic directional filter
-    df = bursts_df.copy()
-
-    # Classify direction if not already done
-    if "Direction" in df.columns:
-        directional = df[df["Direction"] != 0].copy()
+    # Directional bursts only.
+    if "Direction" in bursts_df.columns:
+        directional = bursts_df[bursts_df["Direction"] != 0]
     else:
-        directional = df.copy()
+        directional = bursts_df
+    if directional.empty:
+        return pd.DataFrame()
 
-    records = []
-    for (date, ticker), group in directional.groupby(["Date", "Ticker"]):
-        buy_mask = group["Direction"] == 1
-        sell_mask = group["Direction"] == -1
+    # Vectorized aggregation — a Python loop over (Date,Ticker) groups is far
+    # too slow at universe scale (~360k groups over ~340M bursts hit the SGE
+    # walltime). groupby.agg does the same work in C.
+    d = directional[["Date", "Ticker", "Direction", "Volume"]].copy()
+    is_buy = (d["Direction"] == 1)
+    is_sell = (d["Direction"] == -1)
+    d["buy_vol"] = d["Volume"].where(is_buy, 0.0)
+    d["sell_vol"] = d["Volume"].where(is_sell, 0.0)
+    d["n_buy"] = is_buy.astype("int64")
+    d["n_sell"] = is_sell.astype("int64")
 
-        buy_vol = group.loc[buy_mask, "Volume"].sum() if buy_mask.any() else 0
-        sell_vol = group.loc[sell_mask, "Volume"].sum() if sell_mask.any() else 0
-        total_vol = buy_vol + sell_vol
+    g = d.groupby(["Date", "Ticker"], sort=False).agg(
+        n_buy=("n_buy", "sum"),
+        n_sell=("n_sell", "sum"),
+        buy_vol=("buy_vol", "sum"),
+        sell_vol=("sell_vol", "sum"),
+        n_bursts=("Direction", "size"),
+    ).reset_index()
 
-        coi = (buy_vol - sell_vol) / total_vol if total_vol > 0 else 0.0
-
-        records.append({
-            "Date": date,
-            "Ticker": ticker,
-            "COI": coi,
-            "n_buy": buy_mask.sum(),
-            "n_sell": sell_mask.sum(),
-            "buy_vol": buy_vol,
-            "sell_vol": sell_vol,
-            "total_vol": total_vol,
-            "n_bursts": len(group),
-        })
-
-    return pd.DataFrame(records)
+    g["total_vol"] = g["buy_vol"] + g["sell_vol"]
+    g["COI"] = np.where(g["total_vol"] > 0,
+                        (g["buy_vol"] - g["sell_vol"]) / g["total_vol"], 0.0)
+    return g[["Date", "Ticker", "COI", "n_buy", "n_sell",
+              "buy_vol", "sell_vol", "total_vol", "n_bursts"]]
 
 
 def build_quintile_portfolios(coi_daily, returns_df):
