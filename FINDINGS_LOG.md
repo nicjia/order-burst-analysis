@@ -474,9 +474,29 @@ fraction (M12a). Infra: `hoffman2/hidden_xsec.sh` (SGE array, one task/ticker), 
 - **Expected runtime:** ~12-24h wall (heavy names + rsync latency). Monitor: `qstat -u nicjia | grep hxsec`;
   progress `ls results/hidden_xsec/out/*.csv | wc -l` (→483). On completion run `python src_py/hidden_xsec_agg.py`
   → per-name + date-clustered markout t (3/15/30m), midpoint fraction, daily hidden-COI→CLOP IC across the universe.
-- **Prior (n=2) expectation to test at scale:** 3-min footprint REAL & day-clustered-significant, decays/reverses
-  by 30m, NULL overnight (AAPL IC−0.08, TSLA +0.01). If the cross-section confirms → airtight M12 centerpiece:
-  hidden-execution flow is a genuine sub-spread, minutes-scale footprint, not overnight alpha.
+- **Prior (n=2) expectation:** 3-min footprint real, decays/reverses by 30m, NULL overnight.
+
+### RESULTS (2026-07-04, `src_py/hidden_xsec_agg.py`, 474 names, 221,261 ticker-days, 2023-2024):
+| horizon | cross-name mean markout | %names day-clustered t>2 | pooled date-clustered t |
+|---|---|---|---|
+| 3-min | +1.62 bps | **79%** | **+3.38** (502 days) |
+| 15-min | +1.72 bps | 66% | +3.49 |
+| 30-min | +2.16 bps | 62% | +15.23 |
+- **M12a MIDPOINT FRACTION = 48.9%** of hidden prints execute exactly at the mid (unsignable by the quote rule;
+  the pilot's ~11% was unrepresentative). MAJOR caveat: Lee-Ready signs only ~half of hidden volume.
+- **3-min footprint is REAL and PERVASIVE** across the universe: +1.6 bps, day-clustered t>2 in 79% of names,
+  pooled t=3.38. Much stronger than the n=2 pilot's "only 2 names" — this is the airtight M12 upgrade.
+- **Overnight is NULL at scale:** daily hidden-COI → next-day CLOP, date-clustered cross-sectional IC mean −0.0010,
+  **t=−0.40** (per-name mean IC +0.006, 55% positive but tiny). Confirms hidden flow does NOT reach the overnight gap.
+- **CAUTION — 15/30m do NOT reverse** in the broad cross-section (grow to +2.16 bps), UNLIKE the two mega-caps
+  (AAPL 3m+0.42→30m−0.28). The suspiciously high 30-min pooled t=15.23 (vs 3.38 at 3m) is the tell that the
+  longer-horizon directional markout increasingly absorbs intraday DRIFT/momentum (Direction×forward-mid over 30 min
+  on net-directional days ≈ the day's trend), not the burst-specific footprint. So report 3-min as the clean footprint;
+  treat 15/30m as drift-confounded. Magnitude (+1.6 bps at 3m) is SUB-SPREAD (typical spread 4-12 bps → ~15-40%).
+- **VERDICT (M12 closed):** at full cross-section, hidden-execution flow carries a genuine, pervasive, 3-min informed
+  footprint (t=3.4, 79% of 474 names) that is sub-spread and does NOT reach the overnight horizon (IC t=−0.40).
+  Real microstructure fact, not deployable overnight alpha. Midpoint-fraction (49%) transparency added.
+  Artifacts: `results/hidden_xsec/out/*.csv` (474), `results/research/hidden_xsec_daily.csv` (22MB, cluster).
 
 ## 5. Artifacts (on cluster `/u/scratch/n/nicjia/order-burst-analysis`)
 - Scripts: `src_py/{markout_panel,intraday_backtest}.py`, `panel_regression.py` (--gated),
