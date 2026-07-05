@@ -73,9 +73,16 @@ DB_TAINTED_FEATURES = {
 # so this set is empty.  Kept for structural compatibility.
 DB_LEAKY_TARGETS = set()
 
+# Referee M3: D_b is the forward 1-10 min markout, realized only after the burst
+# terminates; feeding it as a prediction-time feature contradicts the "evaluated
+# on-the-fly at termination" claim. Set OB_DROP_DB=1 to drop all D_b-tainted
+# features (the conservative, timing-feasible feature set) for every target.
+import os as _os
+_DROP_DB_ENV = _os.environ.get("OB_DROP_DB", "0") == "1"
+
 def get_features(df, target_key):
     feat_cols = list(EXTENDED_FEATURE_COLS)
-    if target_key in DB_LEAKY_TARGETS:
+    if _DROP_DB_ENV or (target_key in DB_LEAKY_TARGETS):
         feat_cols = [c for c in feat_cols if c not in DB_TAINTED_FEATURES]
     feat_available = [c for c in feat_cols if c in df.columns]
     
@@ -373,11 +380,22 @@ def main():
     # ── ANTI-BIAS FIX: Apply kappa ONLY to the training window ──
     # The training set can use kappa because D_b is computed from known past data.
     # But we must NOT apply kappa to the test day — that would leak future info.
+    MIN_BURNIN_TRAIN = 30  # floor below which kappa-filtered burn-in is too sparse to fit a scaler+SGD
     if training_kappa > 0.0 and 'D_b' in filtered.columns:
         train_kappa_mask = train_mask & (filtered['D_b'].values >= training_kappa) & filtered['D_b'].notna().values
         X_train_k = X[train_kappa_mask]
         y_train_k = y[train_kappa_mask]
-        print(f"  Training kappa filter: {training_kappa} → {len(y_train_k)}/{len(y_train)} train bursts retained")
+        if len(y_train_k) < MIN_BURNIN_TRAIN:
+            # Sparse-window fallback: many names have D_b≈0 across the geometry-filtered
+            # burn-in, so the one-sided D_b>=kappa gate empties it. Rather than drop the
+            # name (breadth is the whole point), seed burn-in from the UNFILTERED window;
+            # the daily online updates still see the full stream. Documented degradation.
+            print(f"  Training kappa filter: {training_kappa} → {len(y_train_k)}/{len(y_train)} "
+                  f"(< floor {MIN_BURNIN_TRAIN}); falling back to unfiltered burn-in training")
+            X_train_k = X_train
+            y_train_k = y_train
+        else:
+            print(f"  Training kappa filter: {training_kappa} → {len(y_train_k)}/{len(y_train)} train bursts retained")
     else:
         X_train_k = X_train
         y_train_k = y_train
