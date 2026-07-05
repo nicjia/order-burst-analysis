@@ -47,6 +47,11 @@ from scipy import stats as scipy_stats
 sys.path.append(str(Path(__file__).parent.absolute()))
 from beta_hedged_markout import newey_west_se
 
+# Reuse the SAME burst gating cascade the backtest uses, so the gated COI
+# (COI^info, Reviewer B3) is computed over exactly the "informational bursts"
+# the paper defines — not a re-implementation that could drift from it.
+from silence_optimized_sweep import classify_and_filter, compute_trailing_adv
+
 # linearmodels is installed on Hoffman2 (setup_hoffman2.sh) but may be
 # absent in lighter local environments. Import-guard so the script still
 # runs with the hand-rolled Fama-MacBeth fallback below (Reviewer B4).
@@ -84,6 +89,67 @@ def load_burst_data(burst_dir, tickers, suffix="baseline_unfiltered"):
             df["Ticker"] = ticker
         frames.append(df)
 
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def load_burst_data_gated(burst_dir, tickers, vol_frac, dir_thresh, vol_ratio,
+                          suffix="baseline_unfiltered"):
+    """Load bursts and keep only GATED 'informational' bursts (Reviewer B3).
+
+    Applies the SAME geometry cascade as online_sgd_backtest.py via
+    classify_and_filter (kappa=0 — no look-ahead; the kappa gate uses forward
+    prices and is reserved for training only): per-burst fractional-ADV volume
+    floor (vol_frac x trailing 14-day ADV), directional-consistency >= dir_thresh,
+    and minor/major volume ratio <= vol_ratio. Direction is recomputed by the
+    gate. Returns the same [Date, Ticker, Direction, Volume] schema downstream
+    code expects, so the gated/ungated panels differ ONLY in which bursts feed
+    COI.
+    """
+    needed = ["Date", "Ticker", "Volume", "BuyCount", "SellCount",
+              "BuyVolume", "SellVolume", "D_b"]
+    frames = []
+    n_in = n_out = 0
+    for ticker in tickers:
+        path = os.path.join(burst_dir, f"bursts_{ticker}_{suffix}.csv")
+        if not os.path.exists(path):
+            print(f"  Warning: Missing {path}, skipping {ticker}")
+            continue
+        try:
+            avail = pd.read_csv(path, nrows=0).columns
+        except Exception:  # noqa: BLE001
+            print(f"  Warning: unreadable {path}, skipping {ticker}")
+            continue
+        miss = [c for c in needed if c not in avail]
+        if miss:
+            print(f"  Warning: {ticker} missing gating cols {miss}, skipping")
+            continue
+        df = pd.read_csv(path, usecols=needed)
+        if "Ticker" not in df.columns:
+            df["Ticker"] = ticker
+        try:
+            df["Date"] = df["Date"].astype(int)
+        except (ValueError, TypeError):
+            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y%m%d").astype(int)
+        n_in += len(df)
+
+        # Per-burst fractional-ADV threshold (same as the backtest).
+        adv = compute_trailing_adv(df, window=14, stock_folder=f"data/{ticker}")
+        min_vol_per_burst = (vol_frac * df["Date"].map(adv)).reindex(df.index)
+        gated = classify_and_filter(
+            df, min_vol=0, dir_thresh=dir_thresh, vol_ratio=vol_ratio,
+            kappa=0.0, require_directional=True,
+            min_vol_per_burst=min_vol_per_burst,
+        )
+        if gated.empty:
+            continue
+        n_out += len(gated)
+        frames.append(gated[["Date", "Ticker", "Direction", "Volume"]])
+
+    pct = (100.0 * n_out / n_in) if n_in else 0.0
+    print(f"  GATED loader: {n_out:,}/{n_in:,} bursts survived the informational "
+          f"gate ({pct:.2f}%)  [vol_frac={vol_frac} dir_thresh={dir_thresh} vol_ratio={vol_ratio}]")
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
@@ -358,6 +424,17 @@ def main():
     ap.add_argument("--end-date", default=None)
     ap.add_argument("--output-csv", default=None,
                     help="Optional: save COI panel to CSV")
+    # ── Reviewer B3: gated COI^info over informational bursts ──
+    ap.add_argument("--gated", action="store_true",
+                    help="Compute COI over GATED informational bursts only "
+                         "(vol_frac x ADV + dir_thresh + vol_ratio cascade), "
+                         "instead of all directional bursts (ungated baseline).")
+    ap.add_argument("--vol-frac", type=float, default=None,
+                    help="Fractional-ADV volume floor for --gated (e.g. universal_median vol_frac).")
+    ap.add_argument("--dir-thresh", type=float, default=None,
+                    help="Directional-consistency threshold for --gated.")
+    ap.add_argument("--vol-ratio", type=float, default=None,
+                    help="Minor/major volume ratio ceiling for --gated.")
     args = ap.parse_args()
 
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
@@ -388,10 +465,19 @@ def main():
         active_mr = sorted(mean_revert_set & set(tickers))
         print(f"  Mean-revert signal flip ({regime_source}): {active_mr}")
     print(f"  Fama-MacBeth engine: {'linearmodels' if _HAS_LINEARMODELS else 'hand-rolled NW fallback'}")
+    print(f"  COI mode: {'GATED (COI^info, informational bursts)' if args.gated else 'UNGATED (all directional bursts — M7 baseline)'}")
     print(f"{'='*80}")
 
     # ── Load burst data ──
-    bursts = load_burst_data(args.burst_dir, tickers, args.suffix)
+    if args.gated:
+        if None in (args.vol_frac, args.dir_thresh, args.vol_ratio):
+            print("ERROR: --gated requires --vol-frac, --dir-thresh, and --vol-ratio.")
+            sys.exit(1)
+        bursts = load_burst_data_gated(
+            args.burst_dir, tickers, args.vol_frac, args.dir_thresh,
+            args.vol_ratio, args.suffix)
+    else:
+        bursts = load_burst_data(args.burst_dir, tickers, args.suffix)
     if bursts.empty:
         print("ERROR: No burst data loaded.")
         sys.exit(1)
