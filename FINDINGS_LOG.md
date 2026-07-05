@@ -459,6 +459,25 @@ compiles clean, 0 undefined refs:
 RAISES the OOS reversal Sharpe from +0.79 to +0.83** (plain reversal −0.22, SGD −0.71). So the affirmative
 result is NOT driven by the corporate-action artifacts — winsorizing if anything strengthens it. Good for M8.
 
+## 4l. M12 — full-universe hidden-execution cross-section (LAUNCHED 2026-07-04, job array 13911527)
+Scaling the hidden-execution footprint from n=2 to the full cross-section (referee M12b) + midpoint
+fraction (M12a). Infra: `hoffman2/hidden_xsec.sh` (SGE array, one task/ticker), `src_py/hidden_full.py`
+(extended: Lee-Ready-signed type-5 bursts, 3/15/30-min κ=0 markouts, signed hidden COI, midpoint counts),
+`src_py/hidden_xsec_agg.py` (aggregation).
+- **Scope:** 483 names × 2023-2024 (502 trading days) = ~242k ticker-days, streamed from
+  `nicjia@lobster2.math.ucla.edu:/lobster/{2023,2024}/YYYYMMDD/TICKER.7z` (clean naming), fetch→7z→process→
+  DELETE per ticker-day (stays under quota). Resumable (skips dates whose `.row` exists).
+- **Submit:** `qsub -t 1-483 -tc 12 -l h_data=4G,h_rt=8:00:00 -pe shared 6 -cwd -o logs/ -e logs/ -N hxsec
+  hoffman2/hidden_xsec.sh`. -tc 12 throttles concurrent tickers to protect lobster2 (×6 internal = ~72 streams).
+- **Smoke-tested OK:** AAON 20230103 → `64,mk3+4.92,mk15+1.92,mk30+2.74,buy4059,sell3909,nmid85,nsig670`
+  (~4s/light-day; midpoint frac ~11%). At launch: 12 tasks running, ~18 rows/s, AAPL processing in parallel.
+- **Expected runtime:** ~12-24h wall (heavy names + rsync latency). Monitor: `qstat -u nicjia | grep hxsec`;
+  progress `ls results/hidden_xsec/out/*.csv | wc -l` (→483). On completion run `python src_py/hidden_xsec_agg.py`
+  → per-name + date-clustered markout t (3/15/30m), midpoint fraction, daily hidden-COI→CLOP IC across the universe.
+- **Prior (n=2) expectation to test at scale:** 3-min footprint REAL & day-clustered-significant, decays/reverses
+  by 30m, NULL overnight (AAPL IC−0.08, TSLA +0.01). If the cross-section confirms → airtight M12 centerpiece:
+  hidden-execution flow is a genuine sub-spread, minutes-scale footprint, not overnight alpha.
+
 ## 5. Artifacts (on cluster `/u/scratch/n/nicjia/order-burst-analysis`)
 - Scripts: `src_py/{markout_panel,intraday_backtest}.py`, `panel_regression.py` (--gated),
   `online_sgd_backtest.py` (κ-fallback); drivers `hoffman2/{panel_gated,backtest_all,markout_panel,intraday}_2026.sh`.
