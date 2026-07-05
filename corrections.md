@@ -139,6 +139,24 @@ Status legend: `[ ]` open · `[~]` partially done · `[x]` done. Priority: **P1*
 
 ---
 
+## RAW-PDF CROSS-CHECK (original Cucuringu report + addendum R1-R6/B1-B12), 2026-07-05
+The 26-item tracker above (all done) is the distilled addendum. Cross-checking the two raw referee PDFs:
+core asks already absorbed by the paper's evolution — R3 sign-conditional = §reversion, R6/M9/B1 breadth = 482
+names, B3/B4/B6 COI panel + FF5+MOM alpha, R1 markout panel. **Referee-report-2 pass (cheap/high-value) DONE:**
+- [x] **B12 citations** — added LRC24 (lrc2024), Kolm-Turiel-Westray (kolm2023), Cont-Cucuringu-Glukhov-Prenzel
+  (cont2023clientflow), Cont-Cucuringu-Zhang (cont2023crossimpact), Sitaru-Calinescu-Cucuringu (sitaru2023),
+  Lucchese-Pakkanen-Veraart (lucchese2024); cited in intro/§breadth/§reconstruction/Appendix B. Bibliography 22→28.
+- [x] **B2 Poisson null test** (`poisson_test.py`, job 13915679) — Fano median 8.1, obs vs Poisson-null z median 87,
+  null rejected on 99.8% of name-days. Restored the (previously deleted) Poisson claim as SUBSTANTIATED (§3 + App B).
+- [x] **B9 time-of-day** (`tod_coi_test.py`, jobs 13915678/13915835) — markout highest at open (+0.84 bps), U-shaped
+  intensity; 3:50 dead-zone structurally justified (0% post-3:50 by construction). App B.
+- [x] **B11 count vs volume COI** — corr 0.81; both weak reversal; count-based marginally stronger (t=−2.7 vs −1.0),
+  per Chan-Lakonishok. App B.
+- **STILL OPEN (moderate/large, from raw PDFs; noted in App B "Residual and Deferred Items"):** Almgren-Chriss
+  nonlinear costs (orig M6); White/Hansen SPA (orig M4); VPIN baseline (orig M7); double-sort portfolios (B5);
+  finer OPCL horizon decomposition (R4); Hawkes (α,β) MLE/α-sweep (orig M8, B10); stylized Kyle-style model (Rec8);
+  SGD hyperparameter documentation (minor); 2017-21 backfill (decisive power, data-gated). None block resubmission.
+
 ## RESUBMISSION PATH (referee's constructive route)
 A viable resubmission would:
 1. **Rewrite Sec 4–7 as the diagnostic subject** of a methods/cautionary paper — the D_b trap, the three look-ahead pitfalls, the in-sample-names post-mortem are the durable contribution. *(within existing infra)*

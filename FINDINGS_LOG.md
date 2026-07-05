@@ -498,6 +498,36 @@ fraction (M12a). Infra: `hoffman2/hidden_xsec.sh` (SGE array, one task/ticker), 
   Real microstructure fact, not deployable overnight alpha. Midpoint-fraction (49%) transparency added.
   Artifacts: `results/hidden_xsec/out/*.csv` (474), `results/research/hidden_xsec_daily.csv` (22MB, cluster).
 
+## 4m. Referee-report-2 pass — B2/B9/B11/B12 (2026-07-05)
+Cross-checked the raw referee PDFs (original Cucuringu report + addendum R1-R6/B1-B12); most core asks already
+absorbed (R3 sign-conditional=reversal, R6 breadth=482, B3/B4/B6 COI panel+FF alpha). Knocked out 4 cheap items:
+
+**B12 citations:** added LRC24 (lrc2024, the COI template), kolm2023 (deep OFI), cont2023clientflow,
+cont2023crossimpact, sitaru2023, lucchese2024 to references.bib; cited in intro (OFI/COI lit), §breadth COI
+framing (LRC24), §reconstruction OFI (kolm2023), Appendix B (LRC24 as the cross-sectional template).
+NOTE: verify exact venue/pages for sitaru2023 (working paper) if precision needed.
+
+**B2 Poisson null test** (`src_py/poisson_test.py`, job 13915679; 434 ticker-days, 39 names, 2023):
+observed same-side δ-clustered bursts vs homogeneous-Poisson-arrival + iid-sign null.
+- Fano factor (index of dispersion; Poisson=1): **median 8.1, mean 9.1, min 3.2** → arrivals strongly over-dispersed.
+- observed bursts/day median **901 vs 94** Poisson-null → ~10×. z (obs vs null) **median 87**, min 2.5.
+- **99.8% of ticker-days reject at z>3 (and z>5).** → Poisson null DECISIVELY rejected. Lets us RESTORE a
+  supported Poisson claim (had been deleted in M11) rather than assert it. Bursts are genuine structures.
+
+**B9 time-of-day** (`src_py/tod_coi_test.py`, array 13915678 + merge 13915835, full universe):
+burst-count share + 3-min markout by intraday window. Open 10.3%/+0.84 bps, mid 82.1%/+0.52, pre-close
+7.6%/+0.36, dead-zone(15:50-16:00) **0.0%** (already excluded upstream by the C++ 3:50 cutoff). Findings:
+(i) predictive markout is HIGHEST at the open (+0.84) and decays through the session = clean intraday
+seasonality; (ii) burst intensity elevated at open (10.3% in 30 min ≈ 2.2× the midday per-minute rate) — the
+classic U-shape; (iii) the 3:50 dead-zone is structurally justified (a burst ending post-3:50 can't mature its
+10-min D_b window before the 4:00 close) and the data respect it by construction (0% present).
+
+**B11 count vs volume COI** (same job): corr(count-COI, volume-COI)=**+0.809** over 461,197 name-days → robust
+to weighting. count-COI date-clustered IC=−0.0062 (t=−2.68, significant), volume-COI −0.0024 (t=−1.01). Both
+NEGATIVE (weak pervasive reversal, consistent with the paper); count-based marginally STRONGER, matching
+Chan–Lakonishok (count = better institutional-splitting proxy). Confirms stability across weighting schemes.
+Artifacts: `results/research/{poisson_daily.csv, todcoi_daily.csv}` (cluster).
+
 ## 5. Artifacts (on cluster `/u/scratch/n/nicjia/order-burst-analysis`)
 - Scripts: `src_py/{markout_panel,intraday_backtest}.py`, `panel_regression.py` (--gated),
   `online_sgd_backtest.py` (κ-fallback); drivers `hoffman2/{panel_gated,backtest_all,markout_panel,intraday}_2026.sh`.
