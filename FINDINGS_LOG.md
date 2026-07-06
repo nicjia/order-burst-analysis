@@ -528,6 +528,32 @@ NEGATIVE (weak pervasive reversal, consistent with the paper); count-based margi
 Chan–Lakonishok (count = better institutional-splitting proxy). Confirms stability across weighting schemes.
 Artifacts: `results/research/{poisson_daily.csv, todcoi_daily.csv}` (cluster).
 
+## 4n. Second-round referee response (2026-07-05/06)
+Referee upgraded Reject → Major Revision. 8 majors + 11 minors + length cuts. Status:
+- **Major 1 (reconcile overnight stats):** new canonical Table `tab:overnight` (§9.6) — FM COI vol −0.62/−1.36,
+  flow→CLOP pooled −8.07 → date-clustered −0.45 (null), count-COI −2.68 (Bonferroni-2 p=0.015, survives but
+  marginal). Retitled §9.6; abstract qualified. `r2_reversal.py`.
+- **Major 2 (hidden placebo):** `hidden_full.py` + `hidden_placebo.sh` (job 13917859, 39 names, 1120 tk-days).
+  3-min burst +1.66, placebo +0.08, NET +1.58 (t=4.8, 95% survives); drift grows at 15/30m (83%/76%) → explains
+  30-min t. Tick-rule signing (incl 49% at-mid) → +0.56 (t=2.0) vs quote +1.66: real but classifier-dependent.
+  Folded into §11 + Table 22 caption + conclusion. "only reconstruction tested at scale" wording fixed.
+- **Major 3 (sign-flow baseline row):** added Direction-only row to Table 19 (+0.36 full / +1.04 OOS, beats headline).
+- **Major 4 (purge overclaims):** deleted Excess-Alpha §, Cross-Asset/Param-Neighborhood, Test-Matrix/Regression-Obj
+  bullets; fixed §6 AUC, "universal constant", horizon caption, Appendix A conclusion.
+- **Major 5 (SGD flip):** added sentence — pred anti-corr −0.205 with flow, momentum-on-pred ≈ reversal-on-flow.
+- **Major 6 (D_b scope):** explicitly scoped −0.28→−0.20 to the 20-name subset.
+- **Major 7 (inhomogeneous Poisson):** `poisson_test.py` re-run (job 13917847). Inhomog null (empirical intraday
+  intensity) still rejected: median z=47, min 4.9, 100% z>3. Sample disclosed (39 names, 2023, 434 tk-days).
+- **Major 8 (reversal integrity):** weight formula written; turnover 0.058/day (~15×/yr); split-repair
+  (winsorized) OOS 0.79→0.83; delisting exposure = 0 exiters, −30% sensitivity immaterial. §10.2/§10.5.
+- **Author notes:** canonicalized all §10 numbers to the M7 harness (Table 17 → 1.47/0.79, K 0.83/0.79/0.82).
+- **Minors:** 1 (depersonalized), 2 ("traded on NASDAQ"), 3 (deleted bogus passive Sharpe col), 4 (canonical
+  earnings baseline), 5 (sample-count footnote), 6 (2026 stub noted), 7 (Fig 3 winsor clarify), 8 (cb not tuned),
+  10 (M5 sign flip), 11 (vendor named Polygon/Massive). Minor 9 (bib venue verify) flagged.
+- **Length cuts (partial):** Appendix B M1-M10 prose → pointers (~2pp); strict-silence Table 2 → 2 sentences;
+  Excess-Alpha/Cross-Asset/Test-Matrix deleted. 36→34pp. Remaining optional: Appendix A compress, cost-grid/horizon.
+Artifacts: `results/research/{hidden_placebo.csv, poisson_daily.csv}`, `src_py/r2_reversal.py`.
+
 ## 5. Artifacts (on cluster `/u/scratch/n/nicjia/order-burst-analysis`)
 - Scripts: `src_py/{markout_panel,intraday_backtest}.py`, `panel_regression.py` (--gated),
   `online_sgd_backtest.py` (κ-fallback); drivers `hoffman2/{panel_gated,backtest_all,markout_panel,intraday}_2026.sh`.

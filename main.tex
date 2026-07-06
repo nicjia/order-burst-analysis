@@ -106,34 +106,8 @@ To identify the physical parameters that best generalize across different time h
 
 I present the optimization results in two phases, corresponding to the two distinct temporal definitions of a burst.
 
-\subsection{Phase I: Strict Silence Threshold Optimization}
-Table \ref{tab:optuna_strict} summarizes the canonical best physical parameters discovered using the strict silence threshold methodology.
-
-\begin{table}[htbp]
-\centering
-\resizebox{\textwidth}{!}{
-\begin{tabular}{llcccccc}
-\toprule
-\textbf{Ticker} & \textbf{Target} & \textbf{Best AUC} & \textbf{Silence ($\Delta t$)} & \textbf{Sweep Frac ($vol\_frac$)} & \textbf{Dir. Thresh} & \textbf{Vol. Ratio} & \textbf{$\kappa$} \\
-\midrule
-NVDA & cls\_1m & 0.6533 & 2.0s & 0.0049 & 0.7097 & 0.5674 & 0.0 \\
-NVDA & cls\_close & 0.5339 & 0.5s & 0.0007 & 0.7158 & 0.0689 & 1.2763 \\
-TSLA & cls\_1m & 0.6464 & 0.5s & 0.0050 & 0.6781 & 0.4262 & 0.0 \\
-TSLA & cls\_close & 0.5554 & 0.5s & 0.0019 & 0.5659 & 0.3395 & 0.4713 \\
-JPM & cls\_1m & 0.6239 & 2.0s & 0.0009 & 0.9296 & 0.3865 & 0.0 \\
-JPM & cls\_close & 0.5303 & 0.5s & 0.0001 & 0.6130 & 0.3649 & 1.6608 \\
-MS & cls\_1m & 0.6285 & 2.0s & 0.0017 & 0.9496 & 0.5777 & 0.0 \\
-MS & cls\_close & 0.5696 & 1.0s & 0.0050 & 0.6814 & 0.2961 & 0.8681 \\
-\bottomrule
-\end{tabular}
-}
-\caption{Canonical best physical parameters utilizing strict time-based silence thresholds. Short horizons favor larger silence gaps and larger sweep fractions, while long-horizon models aggressively gate via the $\kappa$ filter.}
-\label{tab:optuna_strict}
-\end{table}
-
-The strict optimization phase revealed that short-horizon predictability consistently scales with longer silence thresholds (e.g., 2.0s for NVDA, JPM, and MS), allowing the burst to fully absorb standard LOB latency before evaluation. Conversely, long-horizon targets necessitated highly restrictive short-horizon decay filters; for NVDA $cls\_close$, applying the $\kappa=1.2763$ filter systematically discarded the majority of raw bursts.
-
-To illustrate the selective power of each filter stage, Table \ref{tab:filter_cascade} presents the sequential compression cascade under the regression-optimized parameters. For NVDA, the dominant filter is $\kappa$ (only 24.6\% of raw bursts survive when applied in cascade), while $vol\_frac$ is less binding. For TSLA, the $vol\_frac$ threshold is the primary gate, eliminating 97.4\% of bursts immediately due to TSLA's much higher fractional volume requirement ($vol\_frac = 0.0033$ vs.\ NVDA's $6.45 \times 10^{-5}$).
+\subsection{Phase I: Strict Silence Threshold}
+The initial strict-silence parameterization was superseded by the Hawkes clustering below and we do not report its full sweep; briefly, short-horizon targets favored longer silence gaps (up to 2.0s) while long-horizon targets required aggressive $\kappa$-gating (e.g.\ NVDA $cls\_close$ at $\kappa\approx1.28$ discarded most raw bursts). To illustrate the selective power of each filter stage, Table \ref{tab:filter_cascade} presents the sequential compression cascade under the regression-optimized parameters. For NVDA, the dominant filter is $\kappa$ (only 24.6\% of raw bursts survive when applied in cascade), while $vol\_frac$ is less binding. For TSLA, the $vol\_frac$ threshold is the primary gate, eliminating 97.4\% of bursts immediately due to TSLA's much higher fractional volume requirement ($vol\_frac = 0.0033$ vs.\ NVDA's $6.45 \times 10^{-5}$).
 
 \begin{table}[htbp]
 \centering
@@ -751,7 +725,7 @@ The reconstruction is thus not the binding constraint in the trivial sense---hid
 \section{Conclusion}
 This paper asks whether intraday order-submission bursts in limit order books encode tradable information about overnight price persistence. The honest answer, established under rigorous look-ahead controls and at cross-sectional scale, is largely negative---and the process of arriving at it yields the paper's durable contributions. On a handful of high-volatility single names filtered burst flow appears strongly predictive. But those single-name results do not survive scrutiny: the headline names coincide with the in-sample parameter-tuning set, and the large intraday markouts are inflated by gating on the realized-impact filter $D_b$, which is itself the forward markout. Evaluated free of look-ahead across a 482-name universe (2022--2026), the cross-sectional order-imbalance signal is insignificant (Fama--MacBeth $t\approx-1.4$), the per-name overnight strategy returns are dominated by an incidental short-market-beta exposure with a residual $\alpha$ indistinguishable from zero, and the genuine intraday footprint is smaller than the bid-ask spread.
 
-The contributions are therefore methodological and diagnostic rather than a deployable strategy. They include: the \emph{model--optimizer alignment} argument (tuning physical parameters under the exact estimator used in production); the identification of the $D_b$ look-ahead and the $\kappa$-firewall that isolates it; the correction of the burst-start-mid target to the tradable close-to-open return; a multi-horizon markout methodology with date-cluster bootstrap inference that separates real footprints from selection artifacts; and a systematic comparison of burst \emph{reconstructions}---Hawkes, order-flow imbalance, book-resilience, and hidden-execution clustering---together with three concrete look-ahead traps encountered in their construction (Section \ref{sec:reconstruction}). That comparison isolates a genuinely novel empirical fact, and---unlike the rest of the paper's positive claims---one that strengthens at scale: among all reconstructions, only \emph{hidden}-execution bursts carry a statistically robust informed footprint, now established across the full 474-name cross-section (three-minute directional markout $+1.6$ bps, pooled date-clustered $t=3.4$, individually significant in $79\%$ of names), not merely on two. This is consistent with hidden and iceberg orders being the mechanism through which institutions conceal informed size. It comes with two honest qualifications: only about half of hidden prints are signable (the remainder execute exactly at the midpoint), and the footprint is sub-spread and does not reach the overnight horizon (cross-sectional overnight information coefficient $t=-0.4$).
+The contributions are therefore methodological and diagnostic rather than a deployable strategy. They include: the \emph{model--optimizer alignment} argument (tuning physical parameters under the exact estimator used in production); the identification of the $D_b$ look-ahead and the $\kappa$-firewall that isolates it; the correction of the burst-start-mid target to the tradable close-to-open return; a multi-horizon markout methodology with date-cluster bootstrap inference that separates real footprints from selection artifacts; and a systematic comparison of burst \emph{reconstructions}---Hawkes, order-flow imbalance, book-resilience, and hidden-execution clustering---together with three concrete look-ahead traps encountered in their construction (Section \ref{sec:reconstruction}). That comparison isolates a genuinely novel empirical fact that strengthens at scale: among the reconstructions tested at scale, only \emph{hidden}-execution bursts carry a statistically robust informed footprint, established across the full 474-name cross-section (three-minute markout $+1.6$ bps, $t=3.4$, significant in $79\%$ of names) and surviving a matched-random-time placebo ($95\%$ of the effect). It is bounded on two axes: roughly half of hidden prints are unsignable at-mid (signing them by tick rule lowers the footprint to $+0.6$ bps but keeps it significant), and it is sub-spread and does not reach the overnight horizon ($t=-0.4$).
 
 The one affirmative empirical result is conditional and modest. Sign-conditioning the burst signal on tick regime, as the microstructure reframing suggests, reveals a monotone asymmetry---continuation in large-tick names, mean-reversion in tick-constrained ones---that is orthogonal to the Fama--French five factors plus momentum. The associated market-neutral reversal is economically positive out of sample and robust to the universe cutoff, but its out-of-sample Sharpe ($\approx0.8$) does not survive multiple-testing deflation (deflated-Sharpe probability $0.70$) and a plain signed-order-flow baseline reproduces most of it without the machine-learning apparatus; the regime mechanism is the durable finding, its monetization an unproven direction.
 
