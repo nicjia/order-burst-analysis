@@ -23,18 +23,17 @@ work(){ t=$1; dd=$2; L=nicjia@lobster2.math.ucla.edu; GD=results/research/poisso
 export -f work
 cat $GD/tasks | xargs -P12 -n2 bash -c 'work "$@"' _
 echo "rows=$(ls $GD/rows/*.row 2>/dev/null | wc -l) $(date)"
-echo "ticker,date,n_trades,fano,obs,poisson_mean,poisson_std,z" > results/research/poisson_daily.csv
+echo "ticker,date,n_trades,fano,obs,hom_mean,z_hom,inh_mean,z_inh" > results/research/poisson_daily.csv
 cat $GD/rows/*.row 2>/dev/null >> results/research/poisson_daily.csv
 python3 - <<'PY'
 import pandas as pd, numpy as np
 d=pd.read_csv("results/research/poisson_daily.csv")
-for c in ["n_trades","fano","obs","poisson_mean","poisson_std","z"]: d[c]=pd.to_numeric(d[c],errors="coerce")
-d=d.dropna(subset=["z","fano"])
-print(f"\n=== B2 POISSON NULL TEST: {len(d)} ticker-days, {d.ticker.nunique()} names ===")
-print(f"  Fano factor (index of dispersion; Poisson=1): median={d.fano.median():.1f} mean={d.fano.mean():.1f} min={d.fano.min():.1f}")
-print(f"  observed same-side bursts/day median={int(d.obs.median())} vs Poisson-null median={int(d.poisson_mean.median())}")
-print(f"  z (obs vs homogeneous-Poisson+iid-sign null): median={d.z.median():.1f} mean={d.z.mean():.1f} min={d.z.min():.1f}")
-print(f"  fraction of ticker-days with z>3 (reject Poisson): {100*(d.z>3).mean():.1f}%")
-print(f"  fraction with z>5: {100*(d.z>5).mean():.1f}%")
+for c in ["n_trades","fano","obs","hom_mean","z_hom","inh_mean","z_inh"]: d[c]=pd.to_numeric(d[c],errors="coerce")
+d=d.dropna(subset=["z_hom","z_inh","fano"])
+print(f"\n=== B2 POISSON NULL TEST: {len(d)} ticker-days, {d.ticker.nunique()} names, dates {int(d.date.min())}-{int(d.date.max())} ===")
+print(f"  Fano factor (Poisson=1): median={d.fano.median():.1f} min={d.fano.min():.1f}")
+print(f"  obs bursts/day median={int(d.obs.median())} | homog-null median={int(d.hom_mean.median())} | inhomog-null median={int(d.inh_mean.median())}")
+print(f"  z vs HOMOGENEOUS null:   median={d.z_hom.median():.1f}  %(z>3)={100*(d.z_hom>3).mean():.1f}%")
+print(f"  z vs INHOMOGENEOUS null: median={d.z_inh.median():.1f}  min={d.z_inh.min():.1f}  %(z>3)={100*(d.z_inh>3).mean():.1f}%  %(z>5)={100*(d.z_inh>5).mean():.1f}%")
 PY
 echo "DONE_POISSON rc=$? $(date)"

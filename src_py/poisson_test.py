@@ -37,25 +37,36 @@ def main():
         t = tr.t.to_numpy(float); s = (-tr.dr).to_numpy(np.int8)
         N = len(t)
         if N < 100:
-            print(f"{args.ticker},{date},{N},nan,nan,nan,nan,nan"); return
+            print(f"{args.ticker},{date},{N},nan,nan,nan,nan,nan,nan"); return
         # Fano factor over 1 s bins
         counts, _ = np.histogram(t, bins=np.arange(RTH0, RTH1 + 1.0, 1.0))
         fano = counts.var() / counts.mean() if counts.mean() > 0 else np.nan
         obs = count_bursts(s, t)
-        # homogeneous Poisson null: uniform arrivals over RTH, iid signs at empirical buy prob
         pbuy = (s == 1).mean()
         rng = np.random.default_rng(date + hash(args.ticker) % 10000)
-        B = 200; nulls = np.empty(B)
+        B = 200
+        # homogeneous Poisson null: uniform arrivals, iid signs
+        hom = np.empty(B)
         for b in range(B):
             tt = np.sort(rng.uniform(RTH0, RTH1, N))
             ss = np.where(rng.random(N) < pbuy, 1, -1).astype(np.int8)
-            nulls[b] = count_bursts(ss, tt)
-        mu, sd = nulls.mean(), nulls.std()
-        z = (obs - mu) / sd if sd > 0 else np.nan
-        print(f"{args.ticker},{date},{N},{fano:.3f},{obs},{mu:.2f},{sd:.3f},{z:.3f}")
+            hom[b] = count_bursts(ss, tt)
+        z_hom = (obs - hom.mean()) / hom.std() if hom.std() > 0 else np.nan
+        # INHOMOGENEOUS Poisson null: empirical 60 s intraday intensity profile, iid signs
+        edges = np.arange(RTH0, RTH1 + 60.0, 60.0)
+        prof = counts if len(counts) == len(edges) - 1 else np.histogram(t, bins=edges)[0]
+        inh = np.empty(B)
+        for b in range(B):
+            nk = rng.poisson(prof)                       # Poisson arrivals per bin at empirical rate
+            tt = np.concatenate([rng.uniform(edges[k], edges[k+1], nk[k]) for k in range(len(nk))])
+            tt.sort()
+            ss = np.where(rng.random(len(tt)) < pbuy, 1, -1).astype(np.int8)
+            inh[b] = count_bursts(ss, tt)
+        z_inh = (obs - inh.mean()) / inh.std() if inh.std() > 0 else np.nan
+        print(f"{args.ticker},{date},{N},{fano:.3f},{obs},{hom.mean():.2f},{z_hom:.3f},{inh.mean():.2f},{z_inh:.3f}")
     except Exception as e:
         print(f"{args.ticker},{date},ERR,{e}", file=sys.stderr)
-        print(f"{args.ticker},{date},0,nan,nan,nan,nan,nan")
+        print(f"{args.ticker},{date},0,nan,nan,nan,nan,nan,nan")
 
 
 if __name__ == "__main__":
