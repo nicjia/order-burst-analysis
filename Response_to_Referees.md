@@ -104,6 +104,28 @@ We thank the referee for pointing us to Lu, Reinert & Cucuringu (2024); it is an
 
 ---
 
+## Part V — Response to the Second-Round Report (Major Revision)
+
+We are grateful for the upgrade to Major Revision and for a second report as precise as the first. The eight second-round major concerns are addressed as follows; all figures below are from the current 31-page manuscript.
+
+**S1 — One question, four answers.** All overnight-predictability estimators are now collected in a single canonical table (§9.6, "Overnight predictability of burst flow"), each labeled with horizon, weighting, target base, and unit of inference. The pooled per-name-day statistics ($t=-8.07$, and the earlier $-4.96/-7.16$) are marked pseudo-replicated and shown to collapse to $t=-0.45$ once date-clustered; the volume-weighted signal is a day-level null (Fama--MacBeth $t=-0.6$ to $-1.4$); and the count-weighted COI ($t=-2.68$) is flagged as the only significant cell, surviving a two-variant Bonferroni ($p=0.015$) but marginal under the broader search and economically sub-cost. §9.6 is retitled accordingly and the abstract now qualifies the "null" to accommodate it.
+
+**S2 — Hidden footprint needs a drift placebo.** Implemented. A matched-random-time placebo (same burst directions, random within-day timestamps) yields only $+0.08$ bps at three minutes against the burst's $+1.66$; the burst markout *net of* placebo is $+1.58$ bps ($t=4.8$), so **95% of the three-minute effect survives**. The placebo grows at longer horizons (survival $83\%$/$76\%$ at 15/30 min), which is precisely why the raw 30-minute markout does not reverse and carries an inflated $t$ — the three-minute figure is the clean measure. Separately, signing the 49% at-mid prints by the tick rule (rather than dropping them) lowers the footprint to $+0.56$ bps but keeps it significant ($t=2.0$): the footprint is real and placebo-robust, its magnitude classifier-dependent. The "only reconstruction" claim is narrowed to "the only one tested at scale."
+
+**S3 — Missing sign-only baseline.** Added. The direction-only (sign-of-net-flow) row now appears in the baseline table: out-of-sample Sharpe $+1.04$, *beating* the magnitude-weighted headline ($+0.79$). The deployable content is thus the sign of net flow, not its magnitude — which strengthens the paper's own conclusion.
+
+**S4 — Surviving first-draft overclaims.** Purged. Deleted the "Excess Alpha vs. Market Beta" subsection, the "Parameter Neighborhood Stability" and "Cross-Asset Volume Disparities" paragraphs, the "Test Matrix"/"Regression Objective" bullet lists, and fixed the §6 AUC sentence, the "universal constant" phrase, the horizon-comparison caption, the "OOS stress test" label, and the Appendix A conclusion.
+
+**S5 — Negative SGD row ⇒ positive flipped signal?** Explained in one sentence: the SGD prediction is strongly *anti*-correlated with the burst side ($-0.205$; agreement $21\%$), so trading momentum on the prediction is approximately trading reversal on the flow — a double negative, not a second signal.
+
+**S6 — $D_b$-removal scoped to 20 names.** The $-0.28\to-0.20$ figures are now explicitly labeled as the 20-name subset means.
+
+**S7 — Poisson straw man.** We add the fair test: an *inhomogeneous* Poisson null matched to each name's empirical intraday intensity profile. It absorbs part of the clustering (expected bursts $95\to245$ vs 901 observed) but the observed count still exceeds it by a median $z$ of $47$ (100% of name-days at $z>3$). Sample disclosed: 39 names across 2023, 434 name-days.
+
+**S8 — Reversal integrity.** (i) The weight function is now given explicitly ($w=-\operatorname{sign}(z)$ trailing-20-day mean, dollar-neutral, unit-gross, $z$ clipped) with average daily turnover $0.058$ ($\sim$15$\times$/yr). (ii) The ten split-artifact rows are repaired by winsorizing at $\pm50\%$ and re-running: the out-of-sample Sharpe *rises* to $0.83$. (iii) Delisting exposure is quantified: zero bottom-100 names terminate mid-sample, and a $-30\%$ delisting return leaves the Sharpe unchanged.
+
+All eleven minor points are addressed (edit-history voice depersonalized; "traded on NASDAQ"; the bogus passive Sharpe column deleted; canonical earnings baseline; a sample-count reconciliation footnote; the 2026 partial-year stub noted; the Figure winsorization clarified; $cb$ noted as untuned; the vendor named; the M5 sign-flip noted), and all §10 numbers are canonicalized to the single M7 harness (author note 2). The count-weighted COI is surfaced in the canonical overnight table per author note 1. On length, the recommended clean deletions (the strict-silence and 12-row tuning tables, the flat-bps cost grid, the CLOP/CLCL horizon table, the cost-aware-gating subsection, and Appendix A compressed to one page) are done; the manuscript's protected core (markout, breadth, reversal, reconstruction, audit) is retained.
+
 ## Headline Methodological Contributions
 
 We highlight six contributions that we believe are of independent value to microstructure-ML practice, consolidated in the twelve-dimension audit (**Appendix B, Table 26, p.31**):
