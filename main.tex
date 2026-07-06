@@ -136,22 +136,14 @@ Recognizing the limitations of rigid time cutoffs, I transitioned the pipeline t
 \toprule
 \textbf{Ticker} & \textbf{Target} & \textbf{Hawkes Tag} & \textbf{Best AUC} & \textbf{Dir. Thresh} & \textbf{Sweep Frac ($vol\_frac$)} & \textbf{Vol. Ratio} & \textbf{$\kappa$} \\
 \midrule
-JPM & cls\_clcl & $\beta_{1.0}\lambda_{0.3}$ & 0.5772 & 0.894 & 1.1e-05 & 0.420 & 0.175 \\
-JPM & cls\_clop & $\beta_{1.0}\lambda_{0.8}$ & 0.5477 & 0.503 & 1.0e-05 & 0.553 & 0.206 \\
-JPM & cls\_close & $\beta_{1.0}\lambda_{0.3}$ & 0.5517 & 0.669 & 1.04e-04 & 0.521 & 0.640 \\
-MS & cls\_clcl & $\beta_{1.0}\lambda_{0.5}$ & 0.5200 & 0.922 & 4.93e-03 & 0.267 & 1.291 \\
-MS & cls\_clop & $\beta_{1.0}\lambda_{0.5}$ & 0.5527 & 0.830 & 4.30e-03 & 0.405 & 0.950 \\
-MS & cls\_close & $\beta_{1.0}\lambda_{0.3}$ & 0.5319 & 0.682 & 3.29e-04 & 0.447 & 0.496 \\
-NVDA & cls\_clcl & $\beta_{1.0}\lambda_{0.8}$ & 0.5325 & 0.660 & 8.65e-04 & 0.567 & 0.254 \\
 NVDA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.6046 & 0.511 & 1.87e-04 & 0.600 & 0.988 \\
-NVDA & cls\_close & $\beta_{1.0}\lambda_{0.5}$ & 0.5530 & 0.513 & 1.90e-05 & 0.551 & 0.152 \\
-TSLA & cls\_clcl & $\beta_{1.0}\lambda_{0.5}$ & 0.4994 & 0.940 & 6.50e-05 & 0.013 & 1.651 \\
 TSLA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.5325 & 0.643 & 3.64e-03 & 0.481 & 0.969 \\
-TSLA & cls\_close & $\beta_{1.0}\lambda_{0.8}$ & 0.5414 & 0.512 & 1.10e-05 & 0.600 & 0.855 \\
+JPM & cls\_clop & $\beta_{1.0}\lambda_{0.8}$ & 0.5477 & 0.503 & 1.0e-05 & 0.553 & 0.206 \\
+MS & cls\_clop & $\beta_{1.0}\lambda_{0.5}$ & 0.5527 & 0.830 & 4.30e-03 & 0.405 & 0.950 \\
 \bottomrule
 \end{tabular}
 }
-\caption{Hawkes Process optimization. Directionality limits inherently cluster tightly near the 0.5 to 0.75 range, confirming the necessity for unidirectional LOB sweeps.}
+\caption{Hawkes-process optimization for the overnight (\texttt{cls\_clop}) target, one row per diagnostic-set name (the \texttt{cls\_clcl}/\texttt{cls\_close} rows are omitted for brevity). Directional-consistency thresholds cluster near 0.5--0.75. The AUCs are in-sample classification maxima and, as Sections~\ref{sec:markout}--\ref{sec:breadth} show, do not translate into deployable out-of-sample edge.}
 \label{tab:optuna_hawkes}
 \end{table}
 
@@ -205,9 +197,6 @@ This section reports the single-name pipeline results at face value and then, in
 
 \subsection{Unfiltered Baseline: The Necessity of Filtering}
 Naive, unconditional burst-following generates negative expected value. Table \ref{tab:data_summary} shows that the pipeline detects 894,343 raw bursts for NVDA and 757,120 for TSLA over 499 trading days. Executing on every detected burst yields negative per-trade expectancy, driven by immediate bid-ask reversion and the large volume of non-informational algorithmic pinging (the honest, look-ahead-free intraday markout net of the spread is $-3.5$ to $-7.7$ bps per burst; Section~\ref{sec:markout}). The physical filters reduce NVDA to $\sim$220,430 bursts (Table~\ref{tab:filter_cascade}) and TSLA to $\sim$5,073, and the SGD informational gate concentrates these into a few hundred aggregated daily trades. This compression shows that \emph{some} filtering is necessary to avoid the reversion drag; it does \emph{not}, by itself, establish that the surviving signal is informative---a distinction Sections~\ref{sec:markout}--\ref{sec:breadth} make good on.
-
-\subsection{Cost-Aware vs. Percentile Gating}
-The execution architecture uses the cost-aware buffer $cb$ (defined above) in place of a fixed percentile gate. Conceptually, a percentile threshold (e.g.\ trading only above the rolling 75th/25th percentile of the daily signal) is regime-blind: it does not adapt to the name's prevailing spread, so it admits trades whose expected move is smaller than the friction in wide-spread regimes. The $cb$ buffer scales with the trailing spread and suppresses those trades. We note this only as a design choice; because the cross-sectional evaluation below finds no exploitable overnight signal under \emph{either} gate, the comparison is not load-bearing and we do not report a separate percentile-gate performance table.
 
 \subsection{Regression-Aligned Optimization and Empirical Resolution}
 To systematically bridge the disconnect between predictive capacity and economic tradability, I implemented a regression-aligned hyperparameter sweep. This framework addresses three critical structural traps that plague standard machine learning backtests in high-frequency regimes:
@@ -281,52 +270,9 @@ Post-physical-filter burst count & Table~\ref{tab:filter_cascade} & $220{,}430$ 
 \label{tab:provenance}
 \end{table}
 
-\subsection{Execution Friction and Slippage Limits}
-To rigorously account for the non-trivial market impact of executing institutional size (\$10M) at the consolidated closing and opening auctions, I subjected the strategy to a sliding scale of execution friction. 
+A flat-basis-point cost grid on the two in-sample names is not a meaningful robustness test---the underlying return is in-sample and insignificant ($t\approx0.8$), and a flat charge understates the friction that binds the affirmative result. The relevant test is the per-name, spread-based cost applied to the tick-constrained reversal (Section~\ref{sec:integrity}), where effective half-spreads at the close reach $7.6$--$11.7$ bps.
 
-\begin{table}[htbp]
-\centering
-\begin{tabular}{llccc}
-\toprule
-\textbf{Asset} & \textbf{Round-Trip Cost} & \textbf{ROC (\%)} \\
-\midrule
-\textbf{NVDA} & 1.0 bps & 81.99\% \\
-\textbf{NVDA} & 3.0 bps & 72.57\% \\
-\textbf{NVDA} & 5.0 bps & 63.15\% \\
-\midrule
-\textbf{TSLA} & 1.0 bps & 25.51\% \\
-\textbf{TSLA} & 3.0 bps & 20.25\% \\
-\textbf{TSLA} & 5.0 bps & 14.99\% \\
-\bottomrule
-\end{tabular}
-\caption{Transaction Cost Sensitivity Analysis (2023-2024). Assumes \$10,000,000 Fixed AUM executed at the Market-On-Close (MOC) and exited at the Market-On-Open (MOO). Drawdowns and Sharpe scale proportionally with friction variance.}
-\label{tab:cost_sensitivity}
-\end{table}
-
-The sensitivity matrix (Table \ref{tab:cost_sensitivity}) shows the in-sample NVDA/TSLA returns decaying under 3.0 and 5.0 bps flat penalties while remaining positive. This should not be read as cost-robustness of a real edge: the underlying return is in-sample and insignificant ($t\approx0.8$), the grid is applied only to the two names on which the parameters were tuned, and a flat basis-point charge understates the friction that binds the affirmative result. The cross-sectional spread analysis of Section~\ref{sec:breadth} finds effective half-spreads at the close of $7.6$/$11.7$ bps in the widest quintiles---above this entire grid---so a per-name, spread-based cost is the relevant test, reported there.
-
-\subsection{The Horizon Dependency: Overnight Carry vs. Intraday Dilution}
-To rigorously isolate the temporal locus of the identified alpha, I evaluated the pipeline across two distinct long-horizon targets: Close-to-Open (\texttt{reg\_clop}, overnight persistence) and Close-to-Close (\texttt{reg\_clcl}, full-day momentum).
-
-\begin{table}[htbp]
-\centering
-\resizebox{\textwidth}{!}{
-\begin{tabular}{lcccr}
-\toprule
-\textbf{Ticker} & \textbf{CLOP ROC (\%)} & \textbf{CLCL ROC (\%)} & \textbf{Buy-and-Hold Benchmark (\%)} & \textbf{CLOP Excess Alpha} \\
-\midrule
-\textbf{NVDA} & +81.99\% & -77.92\% & +237.52\% & -155.53\% \\
-\textbf{TSLA} & +25.51\% & -99.57\% & +65.99\% & -40.48\% \\
-\textbf{JPM} & -19.87\% & -28.29\% & +53.48\% & -73.35\% \\
-\textbf{MS} & -1.93\% & -32.61\% & +21.90\% & -23.83\% \\
-\bottomrule
-\end{tabular}
-}
-\caption{Phase-III walk-forward execution (2023-2024, in-sample tuning names) across the CLOP and CLCL horizons. On these four names the overnight (\texttt{reg\_clop}) horizon is positive and the close-to-close (\texttt{reg\_clcl}) horizon negative; on an in-sample, insignificant base this is at most \emph{consistent with} a transient impact that reverts by the next session (Section~\ref{sec:markout}), not evidence of durable overnight alpha.}
-\label{tab:horizon_comparison}
-\end{table}
-
-In Table \ref{tab:horizon_comparison} the \texttt{reg\_clcl} (close-to-close) horizon is uniformly negative on these four in-sample names, whereas \texttt{reg\_clop} (overnight) is not. Taken at face value this would suggest the signal lives in the overnight gap rather than the full day. We flag it more cautiously: on an in-sample, insignificant base, the horizon contrast is at least consistent with the mechanism that Section~\ref{sec:markout} establishes look-ahead-free---a transient intraday impact that mean-reverts by the next session---rather than with durable overnight informational carry. The cross-sectional analysis confirms that even the overnight ``carry'' is, after beta, indistinguishable from zero.
+On the four in-sample names the close-to-close horizon is uniformly negative while the overnight (close-to-open) horizon is not; on an in-sample, insignificant base this is at most consistent with the transient-impact-then-reversion mechanism that Section~\ref{sec:markout} establishes look-ahead-free, and the cross-sectional analysis confirms that even the overnight ``carry'' is indistinguishable from zero after beta. We therefore do not report the full CLOP/CLCL/buy-and-hold horizon table.
 
 \subsection{Parameter-Transfer Probe (2019--2021)}
 Applying 2023--2024-tuned physical parameters to a 2019--2021 dataset violates chronological walk-forward, so these evaluations are parameter-transfer robustness probes, \emph{not} out-of-sample trading deployments. Moreover LLY is itself a tuning-universe name, so its 2019--2021 result is doubly in-sample.
@@ -735,47 +681,9 @@ The natural next steps follow directly from the diagnosis. The single highest-va
 \section{Passive Limit Order Burst Analysis}
 \label{sec:appendix_passive}
 
-\subsection{Objective and Motivation}
-The primary pipeline of this paper focuses on aggressive execution bursts (market orders crossing the spread) and their ability to generate mechanical price impact. As a comparative experiment, we sought to isolate and evaluate \textbf{passive institutional intent}—specifically, whether bursts of passive limit order submissions (adds to the order book) contain predictive informational alpha regarding short-term and overnight price drift.
+The primary pipeline focuses on aggressive execution bursts (market orders crossing the spread). As a negative-control experiment, we ask whether bursts of \emph{passive} limit-order submissions (adds to the book) contain predictive information about short-term and overnight drift.
 
-\subsection{Methodology Divergence}
-Analyzing passive submissions required several fundamental architectural changes compared to the aggressive execution pipeline:
-
-\subsubsection{Burst Detection and Triggers}
-\begin{itemize}
-    \item \textbf{Type 1 Triggers Only}: The Hawkes process was strictly configured to excite only on \texttt{Type 1} (limit order submission) messages at the Best Bid and Offer (BBO) and the next two levels (L1--L3). Market orders (\texttt{Type 4/5}) and cancellations (\texttt{Type 2/3}) were tracked as feature metrics but did not trigger burst detection.
-    \item \textbf{Directional Imbalance}: Burst direction was defined by the ratio of Bid submissions to Ask submissions. A burst was labeled bullish (+1) if the \texttt{BidRatio} exceeded a directional threshold, and bearish (-1) if the \texttt{AskRatio} exceeded the threshold.
-    \item \textbf{ADV Denominator Correction}: In the aggressive pipeline, volume fraction thresholds (\texttt{vol\_frac}) are scaled against total daily volume. For passive submissions, HFT market-making bots generate millions of micro-quotes (quote spam), artificially bloating the raw submission volume. To ground the threshold in economic reality, the ADV baseline was calculated using \textbf{Traded Volume (Types 4/5)}.
-\end{itemize}
-
-\subsubsection{Strict Look-Ahead Avoidance}
-Passive bursts do not generate immediate mechanical impact. Therefore, the target variables are pure price drifts (Close-to-Open gaps or intraday N-minute drifts). To prevent look-ahead bias, \textbf{all features were strictly restricted to information available at the exact millisecond the burst terminated}. 
-\begin{itemize}
-    \item Features like $D_b$ (which averages future price drifts) and \texttt{QueueExhaustionRate} (which looks at post-burst book state) were explicitly excluded.
-    \item The feature set consisted of 30 variables, including burst aggregates (volume, duration), book snapshots (spread, depth, imbalance), pre-burst lookbacks (volatility, momentum), and cancellation interactions (\texttt{PreBurstCancelRate}).
-\end{itemize}
-
-\subsubsection{Transaction Cost Modeling}
-Unlike aggressive bursts, which cross the spread to enter and generate momentum, a strategy trading on passive intent must actively pay the spread to enter the position. 
-\begin{itemize}
-    \item For \textbf{Overnight targets} (Close-to-Open), the model pays a strict \textbf{3.0 bps round-trip friction} to account for the slippage of crossing the Market-On-Close (MOC) and Market-On-Open (MOO) auctions.
-    \item For \textbf{Intraday targets} (3m, 5m, 10m), the model pays the \textbf{actual BBO spread} at the exact time of burst termination (typically 0.74 bps for AAPL, 1.55 bps for JPM, up to 3.31 bps for LLY).
-\end{itemize}
-
-\subsubsection{Target Formulations}
-\begin{enumerate}
-    \item \textbf{Overnight (Close-to-Open)}: $y = \text{arcsinh}\left(\text{direction} \times \frac{\text{Open}_{t+1} - \text{CloseMid}_t}{\text{CloseMid}_t} \times 10000\right)$
-    \item \textbf{Intraday (N-minute)}: $y = \text{arcsinh}\left(\text{direction} \times \frac{\text{Mid}_{t+N} - \text{EndPrice}_t}{\text{EndPrice}_t} \times 10000\right)$
-\end{enumerate}
-
-\subsection{Empirical Results}
-We conducted rigorous Out-of-Sample (OOS) walk-forward backtests on five tickers (JPM, MS, NVDA, LLY, AAPL) using both overnight and intraday horizons.
-
-\subsubsection{The Structural Absence of Passive Flow in TSLA/SPY}
-The first empirical finding was structural: ultra-liquid, momentum-driven assets like TSLA and SPY simply do not contain detectable passive accumulation footprints. Even after adjusting the ADV baseline to bypass HFT noise, the pipeline detected fewer than 50 valid passive bursts for TSLA over two years. Institutions trading these assets appear to almost exclusively utilize aggressive crossing strategies.
-
-\subsubsection{Overnight Horizon (Close-to-Open) Results}
-Using a strict Leave-One-Out (LOO) consensus parameter set to prevent information leakage, the overnight strategy yielded negative Sharpe ratios across all tested assets.
+The passive pipeline mirrors the aggressive one with three changes: the Hawkes process triggers only on Type-1 (limit-order submission) messages at L1--L3; burst direction is the bid-vs-ask submission ratio; and the ADV denominator uses traded (Type-4/5) volume to avoid quote-spam inflation. All features are restricted to information available at burst termination (excluding forward-looking quantities such as $D_b$), and targets are arcsinh-transformed close-to-open and intraday $N$-minute drifts, charged the 3.0 bps auction friction overnight and the actual BBO spread intraday. Out-of-sample walk-forward backtests on JPM, MS, NVDA, LLY, and AAPL (TSLA and SPY are excluded---fewer than 50 valid passive bursts each, as institutions trade them almost exclusively aggressively) yield uniformly negative post-cost results (Table~\ref{tab:passive_overnight}).
 
 \begin{table}[h]
 \centering
@@ -796,34 +704,9 @@ AAPL & 140 & 45.0\% & -3.21 & -0.0039 \\
 
 \textbf{Analysis}: The Spearman correlation for JPM (0.0887) is nominally significant, but per the pseudo-replication caveat (Section~\ref{sec:breadth}) its effective sample size is the number of days, not trades, and its per-day expected value ($\sim$0.44 bps) is well inside the 3.0 bps auction friction; the strategy loses money after costs. (An earlier draft reported an ``annualized Sharpe'' column here with implausible values such as $-76$ and $-140$; those came from annualizing a per-\emph{trade} Sharpe by the trade count rather than by trading days, and the column has been removed as uninformative---mean capture in bps is the comparable quantity.)
 
-\subsubsection{Intraday Horizon Results}
-To test if the alpha decays before the overnight close, we evaluated 3-minute, 5-minute, and 10-minute intraday holds, applying the actual BBO spread as the transaction cost constraint. We tested multiple ML gating mechanisms, including ``Cost-Aware Gating'' (only entering trades where the predicted magnitude exceeds the actual spread).
+The intraday horizons are likewise negative: across 3-, 5-, and 10-minute holds charged the actual BBO spread, and including cost-aware gating, \textbf{0 of 80 tested configurations produced positive post-cost alpha}---even in AAPL, whose $0.74$ bps median spread is the tightest in the set.
 
-\textbf{0 out of 80 tested intraday strategies generated positive post-cost alpha.}
-
-\begin{table}[h]
-\centering
-\begin{tabular}{llrrr}
-\toprule
-\textbf{Ticker} & \textbf{Best Strategy} & \textbf{Win Rate} & \textbf{Mean Capture (bps)} & \textbf{Spearman $\rho$} \\
-\midrule
-JPM & Cost-Aware Gate (10m) & 47.2\% & -0.63 & 0.0253 \\
-MS & Cost-Aware Gate (10m) & 46.8\% & -1.09 & -0.0084 \\
-NVDA & Cost-Aware Gate (10m) & 46.2\% & -1.10 & 0.0004 \\
-LLY & Cost-Aware Gate (5m) & 45.5\% & -0.72 & 0.0047 \\
-AAPL & Cost-Aware Gate (3m) & 46.4\% & -0.50 & 0.0156 \\
-\bottomrule
-\end{tabular}
-\caption{Intraday Horizon Results}
-\label{tab:passive_intraday}
-\end{table}
-
-\textbf{Analysis}: While Cost-Aware Gating minimized losses by successfully avoiding wide-spread regimes, the residual informational signal was simply too diffuse. Even in a tick-constrained asset like AAPL with an exceptionally tight median spread (0.74 bps), the strategy could not overcome execution friction.
-
-\subsection{Conclusion of Passive Experiment}
-The passive limit order experiment yields a definitive negative result, which serves as a powerful contrast to the aggressive execution pipeline. 
-
-Passive institutional accumulation footprints show at most a marginal directional association (JPM's rank correlation is nominally significant but pseudo-replicated, per Section~\ref{sec:breadth}), and in any case the resulting price drift is too weak to survive execution friction---whether the 3.0 bps closing auction or the 0.74 bps continuous spread. This mirrors the paper's central result for \emph{aggressive}-execution bursts, which are likewise not a source of deployable overnight alpha; the passive experiment is reported as a consistent negative control, not as a contrast that rescues an aggressive-flow strategy.
+Passive institutional accumulation footprints thus show at most a marginal directional association (JPM's rank correlation is nominally significant but pseudo-replicated, per Section~\ref{sec:breadth}), and the drift is in any case too weak to survive execution friction. This mirrors the paper's central result for \emph{aggressive}-execution bursts: the passive experiment is a consistent negative control, not a contrast that rescues an aggressive-flow strategy.
 
 \section{Methodological Audit and Robustness Revisions}
 \label{sec:audit}
