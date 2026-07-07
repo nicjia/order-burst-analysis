@@ -129,6 +129,54 @@ def r3_asymmetry(dis, cols, Zf, R, cpx):
               f"-> {'continuation PRESENT' if t>1.7 else 'NO significant continuation'}")
 
 
+# ----------------------------------------------------------------------------- R3 day-level inference
+def _nw_t(x, L=10):
+    """mean and Newey-West t of a series (day-level inference)."""
+    x = np.asarray(x, float); x = x[np.isfinite(x)]; T = len(x)
+    if T < 30: return (np.nan, np.nan, T)
+    m = x.mean(); e = x - m; var = (e @ e) / T
+    for l in range(1, L + 1):
+        w = 1 - l / (L + 1); var += 2 * w * (e[l:] @ e[:-l]) / T
+    return (m, m / np.sqrt(var / T), T)
+
+
+def r3_daylevel(dis, cols, Zsig, R, cpx, skip=1, tag="raw"):
+    """Fama-MacBeth day-level inference for the R3 gradient (addresses the shared
+    time dimension that HC1 ignores). Each day t, cross-sectionally regress the
+    per-name reversal return on log price (and spread); average the daily slopes
+    with Newey-West t, and date-block bootstrap the mean slope. skip=2 = skip-day
+    variant (enter t+2) that kills bid-ask bounce but not information."""
+    print(f"\n[{tag}] DAY-LEVEL (Fama-MacBeth + NW) R3 GRADIENT, skip={skip}")
+    logp = np.log(cpx.mean()); spread = load_relspread(cols)
+    P = -np.sign(Zsig).shift(skip); ret = P * R           # per-name daily reversal return (gross)
+    qp = pd.qcut(logp.dropna(), 5, labels=False, duplicates="drop")
+    cheap = qp[qp == 0].index; pricey = qp[qp == 4].index
+    sp, ss, gap = [], [], []
+    for di in dis:
+        y = ret.loc[di]
+        d = pd.DataFrame({"y": y, "lp": logp, "spr": spread}).dropna(subset=["y", "lp"])
+        if len(d) < 30: continue
+        X = np.column_stack([np.ones(len(d)), d["lp"].values])
+        b, *_ = np.linalg.lstsq(X, d["y"].values, rcond=None); sp.append(b[1])
+        ds = d.dropna(subset=["spr"])
+        if len(ds) >= 30:
+            Xs = np.column_stack([np.ones(len(ds)), ds["spr"].values])
+            bs, *_ = np.linalg.lstsq(Xs, ds["y"].values, rcond=None); ss.append(bs[1])
+        gap.append(np.nanmean(y.reindex(cheap)) - np.nanmean(y.reindex(pricey)))
+    mp, tp, T = _nw_t(sp); ms, ts, _ = _nw_t(ss); mg, tg, _ = _nw_t(gap)
+    print(f"  slope on log price : {mp*1e4:+.3f} bps/lnP  NW t={tp:+.2f} (T={T} days)  HLZ|t|>3: {'PASS' if abs(tp)>3 else 'fail'}")
+    print(f"  slope on rel spread: {ms*1e4:+.3f} bps/bps   NW t={ts:+.2f}")
+    print(f"  cheap-minus-pricey daily gap: {mg*1e4:+.2f} bps/day  NW t={tg:+.2f}")
+    # date-block bootstrap (21-day blocks) of the mean daily log-price slope
+    arr = np.array([v for v in sp if np.isfinite(v)]); rng = np.random.default_rng(0)
+    B, blk = 5000, 21; nb = max(1, len(arr) // blk); boot = np.empty(B)
+    for bix in range(B):
+        idx = rng.integers(0, max(1, len(arr) - blk), nb)
+        boot[bix] = np.concatenate([arr[i:i + blk] for i in idx]).mean()
+    print(f"  date-block bootstrap P(slope>=0) = {(boot >= 0).mean():.4f}")
+    return tp
+
+
 # ----------------------------------------------------------------------------- R3-ORTHO
 def r3_orthogonalized(dis, cols, FL, PR, SD, R, cpx, close):
     """R3 on the lagged-return-orthogonalized flow: does the tick-constraint
@@ -221,6 +269,11 @@ def main():
     Zf = m7.zscore(FL)
     print(f"loaded {len(cols)} names, {len(dis)} days")
     r3_asymmetry(dis, cols, Zf, R, cpx)
+    print("\n" + "="*72 + "\nR3  DAY-LEVEL INFERENCE (audit 2.3) + SKIP-DAY BOUNCE CONTROL (audit 3.1)\n" + "="*72)
+    r3_daylevel(dis, cols, Zf, R, cpx, skip=1, tag="raw flow")
+    r3_daylevel(dis, cols, Zf, R, cpx, skip=2, tag="skip-day")
+    sig = m7.build_signals(dis, cols, FL, PR, SD, close)
+    r3_daylevel(dis, cols, sig["flow_orth_ret"], R, cpx, skip=1, tag="orthogonalized")
     r3_orthogonalized(dis, cols, FL, PR, SD, R, cpx, close)
     r5_romano_wolf()
     r9_state_dependence(dis, cols, Zf, R, cpx)
