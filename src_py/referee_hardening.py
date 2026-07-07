@@ -59,6 +59,10 @@ def per_name_reversal(Zsig, R, cols, mask=None):
 def load_relspread(cols):
     if os.path.exists(RELSPREAD):
         d = pd.read_csv(RELSPREAD)
+        if len(d.columns) == 2:                       # format: <index>,0 with names 'bursts_TICKER'
+            d.columns = ["name", "spread"]
+            d["name"] = d["name"].astype(str).str.replace("bursts_", "", regex=False)
+            return d.set_index("name")["spread"].reindex(cols)
         d.columns = [c.lower() for c in d.columns]
         tk = [c for c in d.columns if c in ("ticker", "name", "tk")][0]
         sp = [c for c in d.columns if "spread" in c or "bps" in c][0]
