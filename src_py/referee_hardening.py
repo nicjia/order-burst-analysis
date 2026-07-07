@@ -129,6 +129,30 @@ def r3_asymmetry(dis, cols, Zf, R, cpx):
               f"-> {'continuation PRESENT' if t>1.7 else 'NO significant continuation'}")
 
 
+# ----------------------------------------------------------------------------- R3-ORTHO
+def r3_orthogonalized(dis, cols, FL, PR, SD, R, cpx, close):
+    """R3 on the lagged-return-orthogonalized flow: does the tick-constraint
+    gradient survive when we strip out the generic cheap-stock bounce component?
+    Uses the paper's own build_signals()['flow_orth_ret'] (flow residualized
+    cross-sectionally each day on the 1/5/20-day lagged-return z-scores)."""
+    print("\n" + "="*72 + "\nR3-ORTHO  ASYMMETRY ON LAGGED-RETURN-ORTHOGONALIZED FLOW\n" + "="*72)
+    sig = m7.build_signals(dis, cols, FL, PR, SD, close)
+    Zo = sig["flow_orth_ret"]
+    price = cpx.mean(); spread = load_relspread(cols)
+    prof = per_name_reversal(Zo, R, cols)
+    df = prof.join(pd.DataFrame({"price": price, "spread_bps": spread})).dropna(subset=["mean_bps", "price"])
+    df["logp"] = np.log(df["price"])
+    for xvar in ["logp", "spread_bps"]:
+        d = df.dropna(subset=[xvar])
+        X = np.column_stack([np.ones(len(d)), d[xvar].values]); y = d["mean_bps"].values
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None); resid = y - X @ beta
+        XtXi = np.linalg.inv(X.T @ X); S = X * resid[:, None]
+        cov = XtXi @ (S.T @ S) @ XtXi * len(d)/(len(d)-2); se = np.sqrt(np.diag(cov))
+        t = beta[1]/se[1]
+        print(f"  [ORTHO] reversal_bps ~ {xvar:10s}: slope={beta[1]:+.3f} (t={t:+.2f}, n={len(d)})  "
+              f"HLZ(|t|>3): {'PASS' if abs(t) > 3 else 'fail'}")
+
+
 # ----------------------------------------------------------------------------- R5
 def r5_romano_wolf():
     print("\n" + "="*72 + "\nR5  ROMANO-WOLF STEPDOWN OVER CONFIG GRID + HLZ HURDLE\n" + "="*72)
@@ -197,6 +221,7 @@ def main():
     Zf = m7.zscore(FL)
     print(f"loaded {len(cols)} names, {len(dis)} days")
     r3_asymmetry(dis, cols, Zf, R, cpx)
+    r3_orthogonalized(dis, cols, FL, PR, SD, R, cpx, close)
     r5_romano_wolf()
     r9_state_dependence(dis, cols, Zf, R, cpx)
     r11_price_count_coi(dis, cols, SD, R)
