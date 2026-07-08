@@ -23,7 +23,7 @@ Distinguishing temporary mechanical price impact from permanent informational pr
 
 The central finding is one of rapid, orderly information decay. Order bursts carry a genuine, measurable informed footprint at minutes-scale horizons: properly (Lee--Ready) signed hidden-execution bursts move price by a mean $+1.6$ bps over three minutes across the full 474-name cross-section (pooled date-clustered $t=3.4$, individually significant in $79\%$ of names, and surviving a matched-random-time placebo that leaves $95\%$ of the effect intact). This footprint is bounded on the two dimensions that determine tradability: it is \emph{sub-spread}---smaller than the bid--ask spread one must cross to trade it---and it \emph{does not reach the overnight horizon} (close-to-open information coefficient $-0.001$, $t=-0.4$). The directional information injected by informed bursts is thus priced within minutes; by the overnight clearing return it has fully decayed, and what residual relation remains is reversal-signed---consistent with liquidity providers absorbing the transient impact and reverting the overshoot.
 
-Two methodological results underwrite this reading and are contributions in their own right. First, an architectural firewall around a forward-looking decay filter $D_b$: because $D_b$ is by construction the 1--10 minute forward markout, it is admissible only for ex-post impact measurement and is excluded from the predictive feature set in the final pipeline---without which the intraday edge is a pure look-ahead artifact (a $D_b$-gated three-minute markout reads $+8.8$ bps against the correctly measured $+0.5$). Second, a date-clustered markout methodology that, applied at cross-sectional scale, separates the genuine sub-spread footprint from selection artifacts and pseudo-replicated significance, and that identifies hidden-execution clustering as the one reconstruction (among Hawkes, order-flow-imbalance, and book-resilience alternatives) with a robust informed footprint. The single conditional affirmative result---a tick-structure-governed asymmetry (significant reversal in tick-constrained names, statistically undetectable in large-tick ones) orthogonal to the Fama--French five factors plus momentum---earns a market-neutral out-of-sample Sharpe of $\approx0.8$ that is economically suggestive but does not survive multiple-testing deflation. The throughline is a precise characterization of informational order flow as a real but minutes-scale, sub-spread phenomenon that the overnight market prices with efficiency.
+The measurement rests on two now-standard safeguards rather than novel methods: the forward-looking decay filter $D_b$ (definitionally the 1--10 minute forward markout) is excluded from the predictive feature set, without which the intraday edge is a pure look-ahead artifact ($D_b$-gated three-minute markout $+8.8$ bps versus the correctly measured $+0.5$); and inference is conducted at the day level with date-clustered errors. The paper's contribution is therefore empirical rather than methodological: a precise, cross-sectional characterization of informational order flow as a real but minutes-scale, sub-spread phenomenon that the overnight market prices with efficiency, together with the identification of hidden-execution clustering as the one burst reconstruction---among Hawkes, order-flow-imbalance, and book-resilience alternatives---carrying a robust informed footprint. The single conditional affirmative result---a tick-structure-governed asymmetry (significant reversal in tick-constrained names, statistically undetectable in large-tick ones) orthogonal to the Fama--French five factors plus momentum and to the short-term-reversal factor---earns a market-neutral out-of-sample Sharpe of $\approx0.8$ that is economically suggestive but does not survive multiple-testing deflation.
 \end{abstract}
 
 \section{Introduction}
@@ -100,54 +100,9 @@ Crucially, when predicting short-horizon permanence (e.g., 1-minute or 3-minute 
 
 \textbf{Why Short-Horizon Targets Are Excluded from Phase III.} While the initial Optuna sweep evaluated both short-horizon targets (e.g., $cls\_1m$, achieving AUC $> 0.64$) and long-horizon targets ($cls\_clop$), the Phase III execution pipeline exclusively targets the overnight horizon for two reasons. First, short-horizon predictions require immediate intraday execution: to capture a predicted 1-minute or burst-to-close movement, the strategy would need to enter a position within seconds of burst detection and exit minutes later, requiring a fundamentally different execution architecture supporting multiple simultaneous intraday positions with per-burst sizing. This stands in contrast to the MOC/MOO framework, which aggregates all signals into a single daily trade. Second, the short-horizon AUC advantage is mechanically inflated by the $D_b$ look-ahead constraint: because $\kappa=0$ is forced for short targets, the pipeline evaluates a much larger and noisier burst universe, making the high AUC less economically actionable after transaction costs. The overnight target, by contrast, permits rigorous $\kappa$-gating and produces a concentrated, high-conviction signal compatible with institutional-scale execution.
 
-\section{Optuna Optimization and Physical Results}
-\label{sec:optuna}
-The physical burst-detection parameters are calibrated \emph{once}, on the four-name tuning set, and then held fixed when the pipeline is applied to the 438-name out-of-sample cross-section; no parameter is re-fit per evaluation name. To identify the physical parameters that best generalize across different time horizons and market regimes, we optimized the physical burst controls using Optuna \citep{optuna2019}. The objective function evaluated a \texttt{HistGradientBoosting} model (using a strict 70/30 chronological train/test split on 2023-2024 data), maximizing the out-of-sample logistic regression Area Under the ROC Curve (AUC) on binary classification permanence targets ($cls\_*$).
-
-We present the optimization results in two phases, corresponding to the two distinct temporal definitions of a burst.
-
-\subsection{Phase I: Strict Silence Threshold}
-The initial strict-silence parameterization was superseded by the Hawkes clustering below and we do not report its full sweep; briefly, short-horizon targets favored longer silence gaps (up to 2.0s) while long-horizon targets required aggressive $\kappa$-gating (e.g.\ NVDA $cls\_close$ at $\kappa\approx1.28$ discarded most raw bursts). To illustrate the selective power of each filter stage, Table \ref{tab:filter_cascade} presents the sequential compression cascade under the regression-optimized parameters. For NVDA, the dominant filter is $\kappa$ (only 24.6\% of raw bursts survive when applied in cascade), while $vol\_frac$ is less binding. For TSLA, the $vol\_frac$ threshold is the primary gate, eliminating 97.4\% of bursts immediately due to TSLA's much higher fractional volume requirement ($vol\_frac = 0.0033$ vs.\ NVDA's $6.45 \times 10^{-5}$).
-
-\begin{table}[htbp]
-\centering
-\begin{tabular}{llrr}
-\toprule
-\textbf{Filter Stage} & \textbf{Condition} & \textbf{NVDA Surviving} & \textbf{TSLA Surviving} \\
-\midrule
-Raw bursts & --- & 894,343 (100\%) & 757,120 (100\%) \\
-$vol\_frac$ & $\geq$ ADV threshold & 762,253 (85.2\%) & 19,641 (2.6\%) \\
-$+ \; dir\_thresh$ & $\geq 0.51$ / $0.57$ & 744,477 (83.2\%) & 15,493 (2.0\%) \\
-$+ \; vol\_ratio$ & $\leq 0.58$ / $0.60$ & 574,946 (64.3\%) & 11,792 (1.6\%) \\
-$+ \; \kappa$ & $D_b \geq 0.82$ / $1.74$ & 220,430 (24.6\%) & 5,073 (0.7\%) \\
-\bottomrule
-\end{tabular}
-\caption{Sequential filter cascade under regression-aligned parameters. Each row applies an additional filter on top of the previous. The dominant filter varies by asset: $\kappa$ for NVDA, $vol\_frac$ for TSLA.}
-\label{tab:filter_cascade}
-\end{table}
-
-\subsection{Phase II: Hawkes Process Structural Optimization}
-Recognizing the limitations of rigid time cutoffs, we transitioned the pipeline to isolate structural footprints via the mutually exciting Hawkes Process. Table \ref{tab:optuna_hawkes} outlines the optimal parameters for long-horizon targets under this behavioral regime.
-
-\begin{table}[htbp]
-\centering
-\resizebox{\textwidth}{!}{
-\begin{tabular}{llcccccc}
-\toprule
-\textbf{Ticker} & \textbf{Target} & \textbf{Hawkes Tag} & \textbf{Best AUC} & \textbf{Dir. Thresh} & \textbf{Sweep Frac ($vol\_frac$)} & \textbf{Vol. Ratio} & \textbf{$\kappa$} \\
-\midrule
-NVDA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.6046 & 0.511 & 1.87e-04 & 0.600 & 0.988 \\
-TSLA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.5325 & 0.643 & 3.64e-03 & 0.481 & 0.969 \\
-JPM & cls\_clop & $\beta_{1.0}\lambda_{0.8}$ & 0.5477 & 0.503 & 1.0e-05 & 0.553 & 0.206 \\
-MS & cls\_clop & $\beta_{1.0}\lambda_{0.5}$ & 0.5527 & 0.830 & 4.30e-03 & 0.405 & 0.950 \\
-\bottomrule
-\end{tabular}
-}
-\caption{Hawkes-process optimization for the overnight (\texttt{cls\_clop}) target, one row per diagnostic-set name (the \texttt{cls\_clcl}/\texttt{cls\_close} rows are omitted for brevity). Directional-consistency thresholds cluster near 0.5--0.75. The AUCs are in-sample classification maxima and, as Sections~\ref{sec:markout}--\ref{sec:breadth} show, do not translate into deployable out-of-sample edge.}
-\label{tab:optuna_hawkes}
-\end{table}
-
-The AUCs are stable across neighboring Hawkes thresholds (e.g.\ NVDA $cls\_clop$ varies by $\Delta<0.005$ across $\lambda_{\min}\in\{0.3,0.5,0.8\}$), but---as Sections~\ref{sec:markout}--\ref{sec:breadth} show---these in-sample, pseudo-replicated classification maxima do not correspond to any deployable out-of-sample edge, and we do not read parameter-neighborhood stability as evidence of one.
+\section{Signal Construction}
+\label{sec:signal}
+The physical burst-detection parameters are calibrated once on the four-name tuning set, and each classified burst is aggregated into a daily net burst-flow imbalance per name; this daily signal is the input to every empirical result below. The full construction---the Optuna calibration of the detection parameters (Appendix~\ref{sec:mlpipeline}), the execution-fingerprint features (Section~\ref{sec:features}), and the online linear (SGD) model used to gate and score bursts---is deferred to Appendix~\ref{sec:mlpipeline}, because the paper's own baselines (Section~\ref{sec:baselines}) show that the linear model adds nothing over the raw net flow: the deployable content is the \emph{sign of daily net burst order flow}, not the model. We therefore keep the body focused on the empirical measurements and treat the pipeline as signal-construction detail.
 
 \section{Feature Engineering and Impact Measurement}
 \label{sec:features}
@@ -164,32 +119,6 @@ To prevent denominator instability inherent in ratio-based metrics during superf
 
 \subsection{Feature Importance and Model Interpretability}
 Since the \texttt{SGDRegressor} is a linear model operating on standardized features, its learned coefficients quantify each feature's marginal contribution to predicted permanence. Across both NVDA and TSLA, one feature dominates: \texttt{Direction} (standardized coefficient $\approx +5.0$ for NVDA, $+4.0$ for TSLA), roughly seventy times the next-largest loading. In other words the fitted model is, to first order, ``follow the burst side''---which raises the question, addressed by the Direction-only ablation in Section~\ref{sec:breadth}, of whether the remaining features earn their place at all. The next-largest loadings are \texttt{PeakImpact} (coef $\approx -0.06$), \texttt{TradeCount}, and \texttt{Duration}, all evaluated at burst termination and admissible as prediction-time features. Consistent with the firewall of Section~\ref{sec:burstdef}, the forward-looking decay measure $D_b$ (Eq.~\ref{eq:db}) is \emph{not} among the predictive features: it is realized only after the burst (and, near the close, after the MOC cutoff), so it is confined to ex-post impact measurement and excluded from the deployed model. Two caveats attach to this ranking. First, a diagnostic fit that \emph{does} admit $D_b$ ranks it second (coef $\approx +0.07$)---an illustration of why the firewall matters, since an unconstrained optimizer would happily lean on the forward markout. Second, these coefficients are estimated on the in-sample tuning names; at cross-sectional scale (Section~\ref{sec:breadth}) the deployed overnight regressor's prediction is in fact \emph{anti}-correlated with the burst side, so the ``follow-the-side'' reading does not survive out of sample.
-
-\section{Predictive Modeling and Strategy Formulation}
-The in-sample classification AUCs above are per-burst, pseudo-replicated, and optimizer maxima (Section~\ref{sec:breadth}); rather than treat them as established signal, the remainder of the paper asks whether any of it maps to robust, walk-forward tradability under institutional constraints---and, at cross-sectional scale, finds that it does not. To validate economic viability, we engineered a continuous, online execution pipeline utilizing an \texttt{SGDRegressor} evaluating chronological limit order book states.
-
-\subsection{Resolving Look-Ahead Bias}
-A fundamental challenge in evaluating intraday momentum is the inherent look-ahead bias present in optimization sweeps. We address this by strictly separating \textit{structural} from \textit{predictive} parameters. The Optuna optimization conducted on 2023--2024 data was limited exclusively to deriving the \textit{physical} definition of an order burst (fractional ADV limits, Hawkes intensity thresholds, directional consistency gates). These parameters define the structural geometry of algorithmic execution, which we treat as more stable across time and across names than a macroeconomic regime variable---an assumption, not a claimed universal constant, and one the 438-name out-of-sample cross-section directly tests by holding the tuning-set parameters fixed. By contrast, the actual trading model is an Online Stochastic Gradient Descent regressor whose weights initialize from scratch for each evaluation period. Following a 30-day burn-in, the model trains strictly on day $T$ to predict day $T+1$, never observing future data.
-
-\subsection{Phase III Formalization: Institutional Execution Architecture}
-\label{sec:phase3}
-Under the Phase-III framework, the execution engine separates intraday observation from trade execution. To resolve end-of-day boundary conditions and enforce institutional sizing and friction constraints, the pipeline operates via the following ruleset:
-
-\begin{enumerate}
-    \item \textbf{Intraday Microstructure Observation}: A burst is formed if consecutive limit orders arrive rapidly, governed by the Hawkes Intensity threshold. The burst is deemed a ``Candidate'' if its aggregate volume strictly exceeds the 14-day trailing fractional ADV and its directional consistency is highly concentrated.
-    \item \textbf{Machine Learning Evaluation}: Every candidate burst is evaluated on-the-fly by the \texttt{SGDRegressor}. The model analyzes the burst's execution fingerprint and predicts the Transformed VSI ($reg\_clop$). If the prediction $> 0.0$, the burst is labeled \textit{Informational}.
-    \item \textbf{Daily Flow Aggregation and Boundary Resolution}: we aggregate the directional volume of all Informational bursts throughout the day. To prevent boundary condition corruption, the pipeline strictly enforces a 10-minute end-of-day dead-zone. Any burst occurring after 3:50 PM EST is ineligible and discarded, so that all 10-minute $D_b$ forward observation windows mature before the market closes. (This dead-zone protects the overnight $D_b$ label but does not make $D_b$ usable as a live intraday feature---see Section~\ref{sec:burstdef}.)
-    \item \textbf{Institutional Position Sizing}: At exactly 4:00 PM EST, we calculate the Net Aggregated Burst Flow. A Long position is initiated if the net flow is positive, and a Short position if negative. To adhere to institutional portfolio constraints, the backtester enforces a strict \textbf{Fixed AUM limitation}, allocating exactly \$10,000,000 of nominal capital per trade, completely independent of the underlying raw burst volume.
-    \item \textbf{Realistic Execution Friction}: The position is held strictly overnight and exited unconditionally at 9:30 AM EST (Next Day's Open). While executing at the MOC and MOO crossing sessions structurally bypasses the continuous intraday L1 bid-ask spread, it is not without friction. To realistically account for exchange fees, clearing costs, and auction price-impact slippage on institutional allocations, we subject the strategy to explicit transaction cost penalties, quantified in subsequent sensitivity analyses. For highly liquid assets such as NVDA and TSLA, a \$10,000,000 Fixed AUM allocation represents less than 0.5\% of the average consolidated closing auction volume (the NYSE/NASDAQ closing cross typically exceeds \$2B in notional value for mega-cap equities), ensuring that simulated executions do not exceed the absorption capacity of the MOC/MOO crosses.
-\end{enumerate}
-
-We define the daily net accumulated directional imbalance for asset $i$ on day $t$ as:
-\begin{equation}
-S_{i,t}(reg\_clop) = \sum_{b \in B_i(t)} \mathbf{1}\{ \text{preds}_b > 0 \} \times Q_b
-\end{equation}
-
-Execution is only triggered if the aggregate imbalance clears a cost-aware buffer $cb$, defined as $cb_{i,t}=c\cdot \hat{s}_{i,t}$, where $\hat{s}_{i,t}$ is the name's trailing average relative half-spread at the close and $c$ is a fixed multiplier (set to $c=1$, i.e.\ the signal must exceed a one-half-spread friction); a trade is placed only when $|S_{i,t}|$ implies an expected move exceeding $cb_{i,t}$. The multiplier $c=1$ is a fixed default, \emph{not} tuned; varying it over $c\in\{0.5,1,2\}$ trades off coverage for per-trade quality without changing the qualitative (null) cross-sectional result, so the buffer is a deployment gate rather than an alpha source.
-
 
 \section{Parameter Calibration and the Tick-Regime Hypothesis}
 \label{sec:empirical}
@@ -528,6 +457,8 @@ Because the affirmative result is concentrated in the lowest-priced names, it is
 
 \textbf{Spread-based costs.} The bottom-100 names have a median close relative spread of $8.0$ bps (mean $9.0$, 90th percentile $13.9$)---far above the $1$--$3$ bps flat grid used earlier. Re-costing the reversal with \emph{per-name} effective half-spreads applied to realized turnover, rather than a flat basis point, lowers the Sharpe only marginally: full-sample $1.47\to1.42$ and walk-forward out-of-sample $0.79\to0.77$. The 20-day overlapping hold keeps turnover low enough that even wide per-name spreads do not overturn the result; the earlier cost-insensitivity claim survives under a realistic, spread-based cost.
 
+\textbf{Short-financing (borrow) costs.} The reversal is dollar-neutral with roughly half its gross exposure on the short side (average short gross $0.50$), and shorting low-priced names can carry meaningful stock-loan fees. Charging an annual borrow fee on the short weights, on top of the spread-based trading cost, lowers the out-of-sample Sharpe from $0.79$ at zero fee to $0.77$ at $1\%$, $0.71$ at $3\%$, $0.66$ at $5\%$, and $0.52$ at $10\%$ (full-sample $1.47\to1.31$ at $3\%$ and $\to0.95$ at $10\%$). Because the bottom-100 are cheap \emph{large-caps} rather than hard-to-borrow micro-caps, general-collateral fees of $1$--$3\%$ are the relevant range, at which the erosion is modest; but the exercise reinforces that the out-of-sample reversal---already statistically insignificant before financing---is not a deployable edge, and that a naive long--short backtest ignoring borrow costs overstates it.
+
 \textbf{Corporate actions.} Prices are from the Polygon/Massive consolidated daily feed. Scanning the bottom-100 universe for single-day close-to-close moves exceeding $50\%$ flags ten name-days---most egregiously LCID ($+862\%$ on 2025-01-02), NLY ($+265\%$), and NVAX ($+99\%$)---consistent with unadjusted (reverse-)splits rather than genuine returns. Winsorizing the daily return matrix at $\pm50\%$ (which caps exactly these rows) and re-running \emph{raises} the out-of-sample reversal Sharpe from $0.79$ to $0.83$ and the full-sample from $1.47$ to $1.71$, so the flagged rows are not what drives the result---if anything they were a drag. To keep the headline figures conservative and internally consistent, we therefore report the \emph{raw} (unwinsorized) series throughout the reversal tables, the Deflated Sharpe, and the factor regressions, and treat the winsorized series as robustness (it only improves every statistic). Repairing the ten flagged rows directly from the feed's split metadata---rather than winsorizing around them---and adopting that single repaired series everywhere is a straightforward refinement; because the split rows are net negative for the strategy, it can only strengthen the reported result.
 
 \textbf{Survivorship and delisting.} We quantify the exposure rather than only flag it, using the fixed-at-start membership rule of Section~\ref{sec:data} under which a mid-sample delisting would surface as a truncated price series, not a silent exclusion. Scanning the daily panel over the full 2022--2026 sample for such truncations, exactly \emph{one} of the 500 fixed-list names (SQ) has a price series ending before 2026---and that reflects Block, Inc.'s 2025 ticker change (SQ$\to$XYZ) in a large-cap, not a delisting, and the name is not in the reversal universe. \emph{Zero} of the bottom-100 reversal names terminate mid-sample, so there is no within-panel delisting to bias the estimate; assigning a conservative $-30\%$ delisting return to any putative exiter leaves the out-of-sample Sharpe unchanged. Decisively, the bottom-100 names on which the reversal lives are cheap \emph{large-caps}, not micro-caps: their time-averaged 2022--2026 price ranges from \$7.95 to \$30.7 (median \$18.0), with \emph{none} below \$5. This is a structural consequence of the liquidity-based universe, since a name needs sufficient volume to generate detectable bursts and therefore cannot be a delisting-prone penny stock, and it directly counters the usual survivorship worry for a cheap-stock reversal (names like F, AAL, SOFI, and NIO are not delisting candidates). The one residual concern the fixed-at-start rule does not fully close is \emph{pre-sample} selection---whether the start-of-sample liquidity screen implicitly omitted names already impaired in 2021; bounding it completely would require the pre-survival coverage list and a CRSP delisting-return splice \citep{shumway1997}, which the cheap-large-cap composition makes unlikely to matter but which we flag as the single remaining survivorship item.
@@ -615,7 +546,7 @@ The reconstruction is thus not the binding constraint in the trivial sense---hid
 \section{Conclusion}
 This paper traces the lifecycle of the directional information carried by intraday order-submission bursts, and finds that it is a story of rapid, orderly decay against an efficient overnight market. The central result, established under look-ahead controls enforced architecturally throughout the pipeline and at cross-sectional scale, has a clean term structure. At minutes-scale horizons, informed bursts leave a genuine, measurable footprint: properly signed hidden-execution bursts move price a mean $+1.6$ bps over three minutes across the full 474-name cross-section ($t=3.4$, significant in $79\%$ of names, surviving a matched-random-time placebo that leaves $95\%$ of the effect intact). But that footprint is bounded on the two dimensions that determine tradability---it is \emph{sub-spread} (smaller than the bid--ask spread one must cross to trade it), and it \emph{does not reach the overnight horizon} (close-to-open information coefficient $-0.001$, $t=-0.4$). By the overnight clearing return the directional information has fully decayed; the volume-weighted cross-sectional order-imbalance signal is insignificant (Fama--MacBeth $t\approx-1.4$), any per-name overnight strategy built on it is just an incidental short-market-beta exposure with residual $\alpha$ indistinguishable from zero, and the residual relation that remains is reversal-signed---consistent with liquidity providers absorbing the transient impact and reverting the overshoot (though the volatility state-dependence that inventory models predict is not detected; Section~\ref{sec:baselines}). Informational order flow is thus real but minutes-scale and sub-spread, priced with efficiency well before it could be monetized overnight.
 
-Two methodological results underwrite this reading and are contributions in their own right. First, the architectural firewall around the forward-looking decay filter $D_b$: because $D_b$ \emph{is} the 1--10 minute forward markout, it is admitted only for ex-post impact measurement and excluded from the predictive feature set in the deployed pipeline---without which the intraday edge is a pure look-ahead artifact ($D_b$-gated three-minute markout $+8.8$ bps against the correctly measured $+0.5$). Second, a date-clustered, multi-horizon markout methodology that, applied at cross-sectional scale, separates the genuine sub-spread footprint from selection and pseudo-replication artifacts, and that identifies hidden-execution clustering as the one reconstruction---among Hawkes, order-flow imbalance, and book-resilience alternatives---with a robust informed footprint (three concrete look-ahead traps encountered along the way are catalogued in Section~\ref{sec:reconstruction}). Signing the roughly half of hidden prints that execute at the midpoint by tick rule lowers the footprint to $+0.6$ bps but leaves it significant; the effect is real, placebo-robust, and classifier-dependent in magnitude.
+The measurement rests on two standard safeguards rather than methodological novelties: excluding the forward-looking $D_b$ filter from the predictive feature set (without which the intraday edge is a look-ahead artifact, $+8.8$ versus the correctly measured $+0.5$ bps), and day-level date-clustered inference. Against these, the paper's contribution is empirical: the cross-sectional measurement of the burst footprint's term structure, and the identification of hidden-execution clustering as the one reconstruction---among Hawkes, order-flow imbalance, and book-resilience alternatives---with a robust informed footprint (three concrete look-ahead traps encountered along the way are catalogued in Section~\ref{sec:reconstruction}). Signing the roughly half of hidden prints that execute at the midpoint by tick rule lowers the footprint to $+0.6$ bps but leaves it significant; the effect is real, placebo-robust, and classifier-dependent in magnitude.
 
 The one conditional affirmative result concerns the \emph{sign} of the residual overnight relation. Sign-conditioning the burst signal on tick regime---as the tick-structure hypothesis predicts---reveals an asymmetry (significant mean-reversion in tick-constrained names, statistically undetectable in large-tick ones) that is orthogonal to the Fama--French five factors plus momentum. The associated market-neutral reversal is economically positive out of sample and robust to the universe cutoff, but its out-of-sample Sharpe ($\approx0.8$) does not survive multiple-testing deflation (deflated-Sharpe probability $0.70$), and a plain signed-order-flow baseline reproduces most of it without the machine-learning apparatus. The tick-regime mechanism is the durable microstructure finding; its monetization remains an unproven direction.
 
@@ -689,6 +620,84 @@ Three further checks, drawn from the conditional-order-imbalance template of \ci
 
 \subsection{Residual and Deferred Items}
 Three items remain open by design and are flagged for transparency. First, the walk-forward out-of-sample reversal is real but underpowered (Sharpe $\approx0.8$, $t=1.4$, deflated-Sharpe probability $0.70$); the decisive resolution is statistical power, and extending the sample backward over the archive that begins in 2017 would, at the observed per-year Sharpe, be sufficient to settle whether the effect is significant. Second, the multiple-testing treatment reports the Deflated Sharpe Ratio; a full White (2000) reality-check or Romano--Wolf stepdown across the entire configuration grid would further harden the selection correction. Third, the hidden-execution classifier for at-midpoint prints (tick, EMO, CLNV) merits a dedicated sensitivity analysis given their $49\%$ share. None of these alters the paper's conclusions; each is a sharpening rather than a reversal.
+
+\section{Signal Construction and the Machine-Learning Pipeline}
+\label{sec:mlpipeline}
+This appendix collects the signal-construction machinery deferred from the body: the Optuna calibration of the physical burst-detection parameters, and the online-SGD execution architecture. It is retained for completeness and reproducibility; the body results depend only on the resulting daily net burst-flow signal, and the baseline analysis (Section~\ref{sec:baselines}) shows the linear model does not improve on it.
+
+\subsection{Optuna Optimization and Physical Results}
+\label{sec:optuna}
+The physical burst-detection parameters are calibrated \emph{once}, on the four-name tuning set, and then held fixed when the pipeline is applied to the 438-name out-of-sample cross-section; no parameter is re-fit per evaluation name. To identify the physical parameters that best generalize across different time horizons and market regimes, we optimized the physical burst controls using Optuna \citep{optuna2019}. The objective function evaluated a \texttt{HistGradientBoosting} model (using a strict 70/30 chronological train/test split on 2023-2024 data), maximizing the out-of-sample logistic regression Area Under the ROC Curve (AUC) on binary classification permanence targets ($cls\_*$).
+
+We present the optimization results in two phases, corresponding to the two distinct temporal definitions of a burst.
+
+\subsubsection{Phase I: Strict Silence Threshold}
+The initial strict-silence parameterization was superseded by the Hawkes clustering below and we do not report its full sweep; briefly, short-horizon targets favored longer silence gaps (up to 2.0s) while long-horizon targets required aggressive $\kappa$-gating (e.g.\ NVDA $cls\_close$ at $\kappa\approx1.28$ discarded most raw bursts). To illustrate the selective power of each filter stage, Table \ref{tab:filter_cascade} presents the sequential compression cascade under the regression-optimized parameters. For NVDA, the dominant filter is $\kappa$ (only 24.6\% of raw bursts survive when applied in cascade), while $vol\_frac$ is less binding. For TSLA, the $vol\_frac$ threshold is the primary gate, eliminating 97.4\% of bursts immediately due to TSLA's much higher fractional volume requirement ($vol\_frac = 0.0033$ vs.\ NVDA's $6.45 \times 10^{-5}$).
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{llrr}
+\toprule
+\textbf{Filter Stage} & \textbf{Condition} & \textbf{NVDA Surviving} & \textbf{TSLA Surviving} \\
+\midrule
+Raw bursts & --- & 894,343 (100\%) & 757,120 (100\%) \\
+$vol\_frac$ & $\geq$ ADV threshold & 762,253 (85.2\%) & 19,641 (2.6\%) \\
+$+ \; dir\_thresh$ & $\geq 0.51$ / $0.57$ & 744,477 (83.2\%) & 15,493 (2.0\%) \\
+$+ \; vol\_ratio$ & $\leq 0.58$ / $0.60$ & 574,946 (64.3\%) & 11,792 (1.6\%) \\
+$+ \; \kappa$ & $D_b \geq 0.82$ / $1.74$ & 220,430 (24.6\%) & 5,073 (0.7\%) \\
+\bottomrule
+\end{tabular}
+\caption{Sequential filter cascade under regression-aligned parameters. Each row applies an additional filter on top of the previous. The dominant filter varies by asset: $\kappa$ for NVDA, $vol\_frac$ for TSLA.}
+\label{tab:filter_cascade}
+\end{table}
+
+\subsubsection{Phase II: Hawkes Process Structural Optimization}
+Recognizing the limitations of rigid time cutoffs, we transitioned the pipeline to isolate structural footprints via the mutually exciting Hawkes Process. Table \ref{tab:optuna_hawkes} outlines the optimal parameters for long-horizon targets under this behavioral regime.
+
+\begin{table}[htbp]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llcccccc}
+\toprule
+\textbf{Ticker} & \textbf{Target} & \textbf{Hawkes Tag} & \textbf{Best AUC} & \textbf{Dir. Thresh} & \textbf{Sweep Frac ($vol\_frac$)} & \textbf{Vol. Ratio} & \textbf{$\kappa$} \\
+\midrule
+NVDA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.6046 & 0.511 & 1.87e-04 & 0.600 & 0.988 \\
+TSLA & cls\_clop & $\beta_{1.0}\lambda_{0.3}$ & 0.5325 & 0.643 & 3.64e-03 & 0.481 & 0.969 \\
+JPM & cls\_clop & $\beta_{1.0}\lambda_{0.8}$ & 0.5477 & 0.503 & 1.0e-05 & 0.553 & 0.206 \\
+MS & cls\_clop & $\beta_{1.0}\lambda_{0.5}$ & 0.5527 & 0.830 & 4.30e-03 & 0.405 & 0.950 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Hawkes-process optimization for the overnight (\texttt{cls\_clop}) target, one row per diagnostic-set name (the \texttt{cls\_clcl}/\texttt{cls\_close} rows are omitted for brevity). Directional-consistency thresholds cluster near 0.5--0.75. The AUCs are in-sample classification maxima and, as Sections~\ref{sec:markout}--\ref{sec:breadth} show, do not translate into deployable out-of-sample edge.}
+\label{tab:optuna_hawkes}
+\end{table}
+
+The AUCs are stable across neighboring Hawkes thresholds (e.g.\ NVDA $cls\_clop$ varies by $\Delta<0.005$ across $\lambda_{\min}\in\{0.3,0.5,0.8\}$), but---as Sections~\ref{sec:markout}--\ref{sec:breadth} show---these in-sample, pseudo-replicated classification maxima do not correspond to any deployable out-of-sample edge, and we do not read parameter-neighborhood stability as evidence of one.
+
+\subsection{Predictive Modeling and Strategy Formulation}
+The in-sample classification AUCs above are per-burst, pseudo-replicated, and optimizer maxima (Section~\ref{sec:breadth}); rather than treat them as established signal, the remainder of the paper asks whether any of it maps to robust, walk-forward tradability under institutional constraints---and, at cross-sectional scale, finds that it does not. To validate economic viability, we engineered a continuous, online execution pipeline utilizing an \texttt{SGDRegressor} evaluating chronological limit order book states.
+
+\subsubsection{Resolving Look-Ahead Bias}
+A fundamental challenge in evaluating intraday momentum is the inherent look-ahead bias present in optimization sweeps. We address this by strictly separating \textit{structural} from \textit{predictive} parameters. The Optuna optimization conducted on 2023--2024 data was limited exclusively to deriving the \textit{physical} definition of an order burst (fractional ADV limits, Hawkes intensity thresholds, directional consistency gates). These parameters define the structural geometry of algorithmic execution, which we treat as more stable across time and across names than a macroeconomic regime variable---an assumption, not a claimed universal constant, and one the 438-name out-of-sample cross-section directly tests by holding the tuning-set parameters fixed. By contrast, the actual trading model is an Online Stochastic Gradient Descent regressor whose weights initialize from scratch for each evaluation period. Following a 30-day burn-in, the model trains strictly on day $T$ to predict day $T+1$, never observing future data.
+
+\subsubsection{Phase III Formalization: Institutional Execution Architecture}
+\label{sec:phase3}
+Under the Phase-III framework, the execution engine separates intraday observation from trade execution. To resolve end-of-day boundary conditions and enforce institutional sizing and friction constraints, the pipeline operates via the following ruleset:
+
+\begin{enumerate}
+    \item \textbf{Intraday Microstructure Observation}: A burst is formed if consecutive limit orders arrive rapidly, governed by the Hawkes Intensity threshold. The burst is deemed a ``Candidate'' if its aggregate volume strictly exceeds the 14-day trailing fractional ADV and its directional consistency is highly concentrated.
+    \item \textbf{Machine Learning Evaluation}: Every candidate burst is evaluated on-the-fly by the \texttt{SGDRegressor}. The model analyzes the burst's execution fingerprint and predicts the Transformed VSI ($reg\_clop$). If the prediction $> 0.0$, the burst is labeled \textit{Informational}.
+    \item \textbf{Daily Flow Aggregation and Boundary Resolution}: we aggregate the directional volume of all Informational bursts throughout the day. To prevent boundary condition corruption, the pipeline strictly enforces a 10-minute end-of-day dead-zone. Any burst occurring after 3:50 PM EST is ineligible and discarded, so that all 10-minute $D_b$ forward observation windows mature before the market closes. (This dead-zone protects the overnight $D_b$ label but does not make $D_b$ usable as a live intraday feature---see Section~\ref{sec:burstdef}.)
+    \item \textbf{Institutional Position Sizing}: At exactly 4:00 PM EST, we calculate the Net Aggregated Burst Flow. A Long position is initiated if the net flow is positive, and a Short position if negative. To adhere to institutional portfolio constraints, the backtester enforces a strict \textbf{Fixed AUM limitation}, allocating exactly \$10,000,000 of nominal capital per trade, completely independent of the underlying raw burst volume.
+    \item \textbf{Realistic Execution Friction}: The position is held strictly overnight and exited unconditionally at 9:30 AM EST (Next Day's Open). While executing at the MOC and MOO crossing sessions structurally bypasses the continuous intraday L1 bid-ask spread, it is not without friction. To realistically account for exchange fees, clearing costs, and auction price-impact slippage on institutional allocations, we subject the strategy to explicit transaction cost penalties, quantified in subsequent sensitivity analyses. For highly liquid assets such as NVDA and TSLA, a \$10,000,000 Fixed AUM allocation represents less than 0.5\% of the average consolidated closing auction volume (the NYSE/NASDAQ closing cross typically exceeds \$2B in notional value for mega-cap equities), ensuring that simulated executions do not exceed the absorption capacity of the MOC/MOO crosses.
+\end{enumerate}
+
+We define the daily net accumulated directional imbalance for asset $i$ on day $t$ as:
+\begin{equation}
+S_{i,t}(reg\_clop) = \sum_{b \in B_i(t)} \mathbf{1}\{ \text{preds}_b > 0 \} \times Q_b
+\end{equation}
+
+Execution is only triggered if the aggregate imbalance clears a cost-aware buffer $cb$, defined as $cb_{i,t}=c\cdot \hat{s}_{i,t}$, where $\hat{s}_{i,t}$ is the name's trailing average relative half-spread at the close and $c$ is a fixed multiplier (set to $c=1$, i.e.\ the signal must exceed a one-half-spread friction); a trade is placed only when $|S_{i,t}|$ implies an expected move exceeding $cb_{i,t}$. The multiplier $c=1$ is a fixed default, \emph{not} tuned; varying it over $c\in\{0.5,1,2\}$ trades off coverage for per-trade quality without changing the qualitative (null) cross-sectional result, so the buffer is a deployment gate rather than an alpha source.
 
 \bibliography{references}
 
