@@ -19,12 +19,14 @@ work(){
   rowdir=$GD/rows/$TK; tmp=$GD/tmp/$TK; row="$rowdir/$dd.row"
   [ -s "$row" ] && return 0
   yr=${dd:0:4}; d="$tmp/$dd"
-  rsync -a --timeout=120 "$L:/lobster/$yr/$dd/$TK.7z" "$d.7z" 2>/dev/null || { echo "$TK,$dd,0,0,0,0" > "$row"; return 0; }
-  [ -s "$d.7z" ] || { echo "$TK,$dd,0,0,0,0" > "$row"; return 0; }
+  rsync -a --timeout=120 "$L:/lobster/$yr/$dd/$TK.7z" "$d.7z" 2>/dev/null || { echo "$TK,$dd,MISSING,MISSING,MISSING,MISSING" > "$row"; return 0; }
+  [ -s "$d.7z" ] || { echo "$TK,$dd,MISSING,MISSING,MISSING,MISSING" > "$row"; return 0; }
   ~/bin/7z x "$d.7z" -o"$d" -y >/dev/null 2>&1
   msg=$(ls "$d"/*message*.csv 2>/dev/null | head -1)
   if [ -n "$msg" ]; then python3 src_py/hist_flow.py --msg "$msg" --ticker "$TK" > "$row" 2>/dev/null
-  else echo "$TK,$dd,0,0,0,0" > "$row"; fi
+  else echo "$TK,$dd,MISSING,MISSING,MISSING,MISSING" > "$row"; fi
+  # MISSING = failed pull / absent file (also = pre-IPO or post-delisting: name not on lobster that date);
+  # a genuine 0 (file present, <10 trades) is emitted by hist_flow.py and kept distinct.
   rm -rf "$d" "$d.7z"
 }
 export -f work
