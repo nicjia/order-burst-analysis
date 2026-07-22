@@ -78,3 +78,13 @@ cookies.txt
 !results/research_report_data.md
 
 *.pdf
+
+# Scratch logs, transcripts, and prompts
+claude*.txt
+*_prompt.md
+*.log
+*_update_*.csv
+
+# Additional bulk results folders
+results_oos2024/
+
