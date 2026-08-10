@@ -88,3 +88,9 @@ claude*.txt
 # Additional bulk results folders
 results_oos2024/
 
+
+# --- measurements: bulk per-print row dumps (regenerable from the cluster) ---
+measurements/data/*
+!measurements/data/earnings_dates.csv
+measurements/out/*.log
+measurements/tmp/

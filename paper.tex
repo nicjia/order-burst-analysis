@@ -1,0 +1,1306 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{natbib}
+\geometry{letterpaper, margin=1in}
+\bibliographystyle{apalike}
+
+\title{The Informational Bifurcation of Hidden Liquidity:\\
+Aggressive versus Midpoint Concealment on a Single Venue}
+\author{Nicholas Jiang}
+\date{August 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Hidden liquidity is commonly treated as a single object, and its informativeness as a single
+number. Using event-by-event LOBSTER message data for 474 NASDAQ-traded names over
+2023--2024, we show that it is neither. Hidden executions away from the midpoint---trades
+with an identifiable aggressor---are associated with a signed midpoint move of $+2.09$ bps
+that is flat from three minutes to the closing bell across the full cross-section. Hidden
+executions \emph{at} the midpoint carry a small \emph{negative} markout of $-0.42$ bps,
+drifting to $-0.71$ by thirty minutes. Pooling them, as any classifier that force-signs
+midpoint fills must, averages an informed population against an uninformed one and returns a
+statistical zero---which is why the four standard trade-sign rules disagree about the
+informativeness of hidden liquidity by two full basis points on the same data. The negative
+leg is not an artifact of the tick rule used to sign it: a matched placebo applying the
+identical rule to decoupled moments recovers $5.4\%$ of it and is statistically zero, and
+tick-signing the aggressive population drives its footprint to zero rather than negative. The
+split is the empirical signature of the self-selection equilibrium of \citet{zhu2014},
+measured \emph{within} one venue and one order type, where venue choice, fee schedule and
+clientele are held fixed and only execution aggressiveness varies---a sharper test of that
+mechanism than the cross-venue comparisons on which the dark-pool literature relies.
+
+The aggressive footprint behaves as an adverse-selection quantity. It is a stable fraction of
+the quoted half-spread: the cross-name correlation is $+0.85$, the ratio is centred on $0.34$
+with an interquartile range of $0.28$--$0.42$, and across spread quintiles spanning a factor
+of five in width the share moves only between $0.29$ and $0.38$. Entered jointly with the
+spread, realized volatility---which predicts the footprint strongly on its own---falls to
+exactly zero ($t=0.2$), so the footprint tracks the spread rather than volatility. On the
+\citet{huangstoll1997} accounting it is $51\%$ of the effective half-spread a taker pays. It
+is incremental to visible order-flow imbalance \citep{cont2014}, and it survives the
+exclusion of earnings windows and large-move days with $94\%$ retention.
+
+Three things this design cannot settle, which we state rather than absorb. Displacement:
+$30\%$ of aggressive prints are followed by the touch being swept within $100$ms, and that
+minority carries $75\%$ of the measured level, essentially all of it coincident with the
+sweep---at this resolution, mechanical displacement and information taken through the trade
+are the same event, though the unswept $70\%$ still carry $+0.46$ bps. Causality: $47.5\%$ of
+the signed move precedes the print on unambiguously-signed trades, and a Hasbrouck VAR with
+thirty minutes of genuine memory finds no lasting response, so we report an association
+rather than an impact---while noting that the obvious bridge between those facts fails, since
+decomposing the markout against the pre-print drift leaves $+1.407$ of $+1.379$ bps
+orthogonal to it. Venue: because LOBSTER reconstructs the NASDAQ book alone, we cannot
+separate price discovery from a local midpoint adjusting toward a consolidated quote that
+moved first. The bifurcation is immune to all three, being a contemporaneous comparison
+between two populations observed on the same feed; it is the magnitudes that are provisional.
+Along the way we document four ways this measurement misleads if taken at face value---a VAR
+whose reported horizons lie beyond its own memory, a non-overlapping sort whose sign depends
+on sampling phase, a sweep test whose conditioning window overlaps its outcome, and a
+tick-rule placebo that turns out to clear rather than convict.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+That hidden orders carry information is established \citep{bessembinder2009, hautsch2012}.
+That informed traders sort themselves across execution mechanisms according to their demand
+for immediacy is likewise established, in theory by \citet{zhu2014} and empirically across
+trading venues by \citet{comertonforde2015} and \citet{buti2017}. This paper joins the two.
+It asks whether the sorting is visible \emph{inside} a single venue and a single order
+type, and finds that it is---sharply enough that the informativeness of hidden liquidity
+cannot be summarized by one number.
+
+The empirical object is the type-5 print in the NASDAQ ITCH message stream: an execution
+against non-displayed resting liquidity. Roughly half of these prints execute exactly at
+the prevailing midpoint and half away from it. The two halves behave differently in a way
+that is not a matter of degree. Prints away from the midpoint are associated with a signed
+three-minute midpoint move that is flat across every horizon we measure---out to thirty
+minutes, and, against a time-of-day-stratified placebo, all the way to the closing bell on
+the full 470-name panel. Prints at the midpoint
+carry $-0.42$ bps, drifting to $-0.71$ by thirty minutes. Because the standard trade-sign
+classifiers differ chiefly in how they handle midpoint trades, they disagree on the
+aggregate footprint by two full basis points---from $+2.09$ under a rule that abstains on
+them to a statistical zero under the Ellis--Michaely--O'Hara hybrid \citep{ellis2000},
+which force-signs them. That disagreement is not a robustness failure to be adjudicated. It is the
+bifurcation showing through the classifier.
+
+Our contribution is threefold, and the third is a negative result about our own measurement
+instrument.
+
+First, we measure the sorting within a venue. A cross-venue comparison confounds
+self-selection with venue-level differences in fee structure, clientele, and reporting
+latency. Here, venue, order type, and reporting mechanism are held fixed, and the only
+variable is whether the execution crossed the spread. We regard this as a sharper test of
+the \citet{zhu2014} mechanism than the cross-venue evidence, and we are explicit that the
+mechanism itself is not our discovery.
+
+Second, we characterize the aggressive footprint as the adverse-selection component of the
+spread. The evidence is a set of cross-sectional facts rather than a structural estimate:
+the footprint is a stable fraction of the quoted half-spread across a fivefold range of
+spread widths; volatility, which predicts it univariately, contributes nothing once the
+spread is controlled; it constitutes $51\%$ of the effective half-spread on the
+\citet{huangstoll1997} accounting; it is incremental to visible order-flow imbalance; and
+it survives the removal of information-event windows. A direct test of
+mechanical displacement is only partly favourable, and we report it as such. We are careful to distinguish the facts from the
+interpretation. A stable ratio is consistent with the Glosten--Milgrom mechanism \citep{glosten1985} under
+which the spread compensates providers for informed flow; it does not demonstrate that the
+spread is \emph{set} that way, and we do not test the causal direction.
+
+Third, we show what our own headline measurement overstates. Conditioning on aggressive
+same-side execution may select moments at which the midpoint is already travelling in that
+direction, in which case a forward markout measures continuation rather than response. We
+test this directly with an event-time profile on both sides of the print, restricted to
+prints executing outside the prevailing quote so that the aggressor's side cannot be
+misassigned. Nearly half the signed move---$47.5\%$ over $[-30\text{s},+180\text{s}]$---
+precedes the print. A Hasbrouck VAR with genuine memory at the horizons of interest, which
+conditions on the prior return path, independently finds no lasting response. We withdraw
+the causal reading accordingly, and report the association. We then test the mechanism that
+would explain both facts---that the markout is continuation of a move already underway---and
+find that it does not hold: regressing the forward markout on the pre-print drift leaves
+essentially all of it orthogonal to the prior path, with the continuation component
+economically zero and slightly negative. Half the move precedes the print, but the pre-drift
+does not forecast what follows, and the markout--VAR disagreement therefore remains open
+rather than resolved.
+
+Section~\ref{sec:data} describes the data and the burst construction. Section~\ref{sec:lit}
+reports the negative result that motivates the rest: on two pilot names, clustering
+\emph{visible} aggressive flow yields no informed footprint under any parameterization we
+tried or under two alternative reconstructions. That section is pilot-scale throughout and
+we mark it as such. Section~\ref{sec:bifurcation} establishes the bifurcation.
+Section~\ref{sec:adverse} characterizes the aggressive footprint as an adverse-selection
+quantity. Section~\ref{sec:alternatives} tests the two leading non-informational accounts.
+Section~\ref{sec:overstate} reports what unconditional markouts get wrong.
+Section~\ref{sec:limits} states what this design cannot settle.
+
+\section{Data and Construction}
+\label{sec:data}
+
+\subsection{Data}
+
+The analysis uses event-by-event limit-order-book data from LOBSTER, reconstructed directly
+from the NASDAQ ITCH message stream, over 2023--2024. The panel is 474 names with
+sufficient hidden flow, spanning $237{,}948$ raw ticker-days, of which roughly $40\%$ are
+absent from the staged archive or fail book reconstruction. Each test then applies the
+filter its estimator requires, so analysis-ready name-day counts differ across tables and
+are reported in each caption. No name-day is excluded on the basis of its outcome.
+
+Two properties of the data govern what can be claimed.
+
+\textbf{LOBSTER does not disclose the side of hidden executions.} The Direction field is
+uniformly $+1$ for type-5 prints, so hidden trades carry no native sign and must be
+classified. This is not incidental to the paper; it is the reason the bifurcation is
+visible at all, since it forces an explicit decision about midpoint prints that a signed
+feed would obscure.
+
+\textbf{LOBSTER reconstructs the NASDAQ book only.} All midpoints, quotes and depths are
+NASDAQ's, not the consolidated NBBO. Section~\ref{sec:limits} states the consequence, which
+is material.
+
+Because each ticker-day must be streamed from the raw archive, decompressed and
+reconstructed individually, we restrict to a two-year window rather than a longer one.
+
+\subsection{Burst construction}
+\label{sec:burstdef}
+
+Isolated order submissions are noisy at horizons beyond a few seconds, so we aggregate
+temporally clustered same-side executions into discrete \emph{bursts}. For burst $b$ with
+start time $t_b$ and reference midpoint $m_{t_b}$, the signed aggregate volume is
+$Q_b = \sum_{j \in b} \text{side}_j\, q_j$.
+
+Cluster membership is determined by a \emph{self-exciting counter}, which we describe
+precisely because its status is often overstated in this literature. A running intensity
+decays exponentially between events and is incremented by each arrival:
+\begin{equation}
+\lambda(t_k) \;=\; \lambda(t_{k-1})\, e^{-\beta (t_k - t_{k-1})} \;+\; 1,
+\qquad \lambda(t_0) = 1,
+\label{eq:counter}
+\end{equation}
+and the burst remains active while $\lambda$ exceeds a threshold $\lambda_{\min}$. This is
+the intensity recursion of an exponential-kernel Hawkes process, and we use it as a
+\emph{clustering heuristic}; we do not fit it. No likelihood is maximized, no branching
+ratio is estimated, and no goodness-of-fit is reported, so we do not describe the
+construction as a fitted point process and none of our claims rest on its being one. What
+we do verify is that the clustering it detects is not an arrival-rate artifact: the count
+of same-side clustered bursts exceeds an \emph{inhomogeneous}-Poisson null matched to each
+name's empirical intraday intensity profile by a median $z$ of $47$, rejecting the Poisson
+null on $100\%$ of name-days.
+
+Equation~\eqref{eq:counter} has two free parameters, not three. The excitation increment is
+fixed at unity, which is a normalization rather than a choice: scaling the increment and
+$\lambda_{\min}$ together leaves the detector's behaviour unchanged, so only their ratio is
+identified. The decay rate $\beta$ and the threshold $\lambda_{\min}$ are the genuine
+parameters, and both are varied---$\beta \in \{0.5, 1, 2, 5\}$ and
+$\lambda_{\min} \in \{0.3, 0.5, 0.8\}$---in Section~\ref{sec:lit}. Additional filters on
+fractional sweep volume, directional consistency, and opposing-volume ratio are applied
+uniformly and described in the replication materials.
+
+Bursts of \emph{hidden} executions, which carry the paper's results, are formed identically
+on type-5 prints alone.
+
+\subsection{Inference}
+
+Throughout, the day---not the individual print---is the unit of statistical inference.
+Markouts are equal-weighted within name-day, then averaged across the cross-section, and
+$t$-statistics are Newey--West \citep{neweywest1987} with 10 lags on the resulting daily
+mean series, or day-level Fama--MacBeth \citep{famamacbeth1973} with the same correction
+where a regression is reported. An outlier rule is applied before any figure is quoted:
+name-days whose markout exceeds $1{,}000$ bps in absolute value at any horizon are dropped.
+On the primary panel this removes 56 name-days of $221{,}261$ ($0.03\%$); one reaches
+$-114{,}627$ bps, which is a corrupt price rather than a return.
+
+\section{A Two-Name Null for Clustered Visible Flow}
+\label{sec:lit}
+
+We begin with the negative result that directs the paper toward hidden liquidity, and state
+its scope before its content: everything in this section is measured on two pilot names,
+AAPL and TSLA. It is what motivated the reconstruction choice the rest of the paper makes,
+not a cross-sectional claim, and we do not extend it to one.
+
+Clustering \emph{visible} aggressive executions produces no measurable informed footprint,
+and this does not depend on how the clustering is tuned. Table~\ref{tab:hawkes_grid}
+recomputes the three-minute directional markout over the decay grid
+$\beta \in \{0.5,1,2,5\}$; every cell is economically negligible and well inside the
+bid--ask spread, and minimum cluster size (over $\{3,5,10\}$, omitted) has no effect. The
+threshold $\lambda_{\min}$ was varied over $\{0.3,0.5,0.8\}$ during detector calibration
+with the same result. The null is not an artifact of a particular parameterization.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{3-min markout (bps)} & $\beta=0.5$ & $\beta=1$ & $\beta=2$ & $\beta=5$ \\
+\midrule
+AAPL & $+0.02$ & $-0.09$ & $-0.03$ & $+0.14$ \\
+TSLA & $-0.10$ & $+0.07$ & $-0.02$ & $+0.26$ \\
+\bottomrule
+\end{tabular}
+\caption{Decay-rate grid for the visible-flow clustering rule, evaluated ungated. Every
+configuration is sub-spread. Minimum cluster size $\in \{3,5,10\}$ is omitted as it had no
+effect.}
+\label{tab:hawkes_grid}
+\end{table}
+
+Because tuning does not help, we replace the construction entirely with three alternative
+reconstructions of the same message stream: \emph{order-flow imbalance} (OFI; the
+top-of-book queue dynamics of \citealp{cont2014}, and its deep-learning descendants,
+\citealp{kolm2023}), \emph{book resilience} (aggressive sweeps whose consumed depth fails
+to replenish), and \emph{hidden-execution} clustering. Table~\ref{tab:altdefs} reports the
+comparison. Only the hidden-execution reconstruction produces a positive markout on both
+names.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{3-min markout (bps)} & Clustered visible & OFI & Book resilience & Hidden \\
+\midrule
+AAPL & $-0.08$ & $+0.08$ & $+0.19$ & $+0.42$ \\
+TSLA & $+0.08$ & $+0.08$ & $+0.16$ & $+0.31$ \\
+\bottomrule
+\end{tabular}
+\caption{Four reconstructions of the same message stream, evaluated ungated on the 2023
+sample. Hidden bursts are signed by the quote rule (execution price against the prevailing
+midpoint); the other three use aggregated signed flow. Two names only: OFI and
+book resilience were validated at pilot scale, and we make no cross-sectional claim for
+them.}
+\label{tab:altdefs}
+\end{table}
+
+Two construction choices are dictated by the definitions and applied uniformly. The
+book-resilience non-refill condition is defined on queue \emph{depth} rather than quote
+price, and its markout is measured strictly after the depth-observation window closes, so
+the filter cannot select on the path over which it is subsequently evaluated. And hidden
+prints, being unsigned in the feed, are signed by the quote rule throughout.
+
+The rest of the paper concerns the one reconstruction that survives. The scope limit bears
+repeating because the sections that follow are cross-sectional and this one is not: all four
+reconstructions were compared on two names, so this is the reason we study hidden-execution
+clustering, not a ranking of the four at cross-sectional scale. A referee is entitled to
+read Section~\ref{sec:lit} as motivation rather than evidence, and nothing downstream
+depends on it.
+
+\section{The Bifurcation}
+\label{sec:bifurcation}
+
+\subsection{Classifier disagreement}
+
+The headline hidden-execution footprint is measured with the quote rule, which is undefined
+for the $48.9\%$ of type-5 prints executing exactly at the midpoint and therefore abstains
+on them. Since that convention discards half the data, the natural question is whether the
+footprint survives classifiers that instead \emph{assign} a sign to midpoint prints.
+Table~\ref{tab:signing} re-signs under four canonical rules.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Classifier (3-min hidden markout)} & \textbf{Markout (bps)} & \textbf{NW $t$} \\
+\midrule
+Quote rule, abstaining at the midpoint & $+2.09$ & $+25.3$ \\
+Tick rule (midpoint prints signed by last price change) & $+0.62$ & $+9.5$ \\
+CLNV \citep{chakrabarty2007} & $+0.46$ & $+8.3$ \\
+EMO \citep{ellis2000} & $+0.03$ & $+0.6$ \\
+\bottomrule
+\end{tabular}
+\caption{Three-minute hidden-execution footprint under four trade-sign classifiers
+(474 names, 2023--2024, $199{,}627$ name-days; $50\%$ of prints at the midpoint). The
+aggregate ranges over two basis points depending solely on the treatment of midpoint
+prints.}
+\label{tab:signing}
+\end{table}
+
+The disagreement is not diffuse. It is concentrated entirely in names whose hidden prints
+are predominantly at the midpoint. Sorting names into quartiles by at-midpoint share
+(Table~\ref{tab:signing_quartile}), all four classifiers agree where few prints are at the
+midpoint (Q1, $15\%$ share: $+0.74$ to $+1.80$); where most are (Q4, $91\%$), only the
+abstaining rule retains a positive value while every force-signing rule goes to zero or
+negative.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccccc}
+\toprule
+\textbf{At-mid quartile} & \textbf{At-mid share} & \textbf{Abstain} & \textbf{Tick} & \textbf{EMO} & \textbf{CLNV} \\
+\midrule
+Q1 (fewest at-mid) & $15\%$ & $+1.80$ & $+1.47$ & $+0.74$ & $+1.28$ \\
+Q2 & $45\%$ & $+1.42$ & $+0.69$ & $+0.19$ & $+0.45$ \\
+Q3 & $75\%$ & $+1.98$ & $+0.18$ & $-0.31$ & $+0.09$ \\
+Q4 (most at-mid) & $91\%$ & $+2.74$ & $-0.27$ & $-0.52$ & $-0.31$ \\
+\bottomrule
+\end{tabular}
+\caption{Three-minute footprint (bps) by classifier across quartiles of a name's
+at-midpoint print share. Classifier disagreement appears only as the at-midpoint share
+rises, locating it in the treatment of midpoint prints rather than in the underlying
+measurement. The Q4 row carries a composition caveat given in the text.}
+\label{tab:signing_quartile}
+\end{table}
+
+The Q4 cell requires a caveat that we state rather than bury, because it is the cell that
+most favours our preferred convention. The abstaining rule's dependent variable is estimated
+\emph{only} on non-midpoint prints, so the sorting variable mechanically governs the size of
+the sample on which the outcome is measured. Across quartiles the number of signed prints
+per name-day falls from $436$ in Q1 to $34$ in Q4---a factor of thirteen. The $+2.74$ in Q4
+is therefore estimated from roughly $9\%$ of those names' hidden prints, and is
+correspondingly noisier and potentially selected: abstention may be isolating the most
+informative subsample rather than measuring a population. This does not affect the
+within-name-day bifurcation of \S\ref{sec:decomp}, which does not sort on this variable, but
+it does mean the quartile gradient should not be read as a clean cross-sectional
+relationship.
+
+\subsection{Two populations}
+\label{sec:decomp}
+
+Table~\ref{tab:decomp} measures the two populations separately, and is the paper's central
+result. Hidden executions away from the midpoint are associated with a $+2.09$ bps
+three-minute move that is flat across horizons ($+2.09 \to +2.24 \to +2.25$ over
+$3/15/30$ minutes). Hidden executions at the midpoint carry a small \emph{negative} markout
+($-0.42$ at three minutes, drifting to $-0.71$ at thirty), which is the signature of
+uninformed liquidity provision absorbing transient price moves.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Hidden-execution subset} & \textbf{3 min} & \textbf{15 min} & \textbf{30 min} \\
+\midrule
+Aggressive (away from the midpoint) & $+2.09\;(t{=}25.3)$ & $+2.24\;(t{=}12.2)$ & $+2.25\;(t{=}13.3)$ \\
+At the midpoint (tick-signed) & $-0.42\;(t{=}{-}6.6)$ & $-0.64\;(t{=}{-}7.0)$ & $-0.71\;(t{=}{-}10.7)$ \\
+\bottomrule
+\end{tabular}
+\caption{Signed midpoint markout (bps) of aggressive versus at-midpoint hidden executions
+(474 names, 2023--2024, $199{,}627$ name-days). Pooling the two is what produces the lower,
+classifier-dependent aggregate of Table~\ref{tab:signing}.}
+\label{tab:decomp}
+\end{table}
+
+We flag a definitional caution the reader should carry forward. Prints away from the
+midpoint are, by construction, prints with an identifiable aggressor, so the statement
+``aggressor-signed prints carry adverse selection and unsignable prints do not'' is partly a
+property of trade classification rather than a purely economic finding. What is \emph{not}
+definitional is the sign of the second population. A classification artifact would place
+at-midpoint prints near zero; they instead carry a reliably negative markout that grows with
+horizon.
+
+That defence is only as good as the sign it rests on, and the at-midpoint row is tick-signed.
+The tick rule labels a print a buy precisely when the price last ticked up, so if
+short-horizon reversion follows that preceding tick, a negative forward markout would arise
+mechanically for \emph{any} set of moments signed this way---no liquidity-provision
+economics required, and the growth with horizon would be equally expected. Since this is the
+load-bearing evidence that the bifurcation is economic rather than classificational, we test
+it directly in \S\ref{sec:tickplacebo} rather than argue it.
+
+The reading is that concealment is informationally bifurcated. Concealed \emph{aggressive}
+intent is associated with adverse selection; concealed \emph{passive} midpoint provision is
+not. This refines rather than restates the finding that hidden orders are informative: only
+the aggressive half is, and reporting a single pooled number averages an informed
+population against an uninformed one.
+
+\subsection{The at-midpoint markout is not a tick-rule artifact}
+\label{sec:tickplacebo}
+
+The concern of the preceding paragraph has a sharp implication: if tick-rule conditioning
+manufactures negative markouts, it should do so wherever it is applied, including at moments
+that are not hidden midpoint executions at all. We test it two ways on the same panel.
+
+\textbf{A matched placebo.} We take the at-midpoint print times of each name-day and shift
+them all by a single random per-day offset. Inter-arrival structure---and therefore the burst
+clustering, which is spacing-dependent---is preserved exactly, while the moments themselves
+are decoupled from actual hidden midpoint executions. We then read the midpoint at those
+shifted times, sign it by the identical tick rule, cluster identically, and measure the same
+markouts. If the negative row is a property of tick-signing rather than of midpoint
+concealment, the placebo should reproduce it.
+
+\textbf{Tick-conditioning a known-informed population.} We re-sign the \emph{aggressive}
+prints by the pure tick rule, discarding their quote-rule sign. This asks what tick
+conditioning does to a population we have independent reason to believe is informed.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Tick-rule placebo} & \textbf{3 min} & \textbf{15 min} & \textbf{30 min} \\
+\midrule
+At-midpoint prints (tick-signed) & $-0.411\;(t{=}{-}9.0)$ & $-0.587\;(t{=}{-}10.4)$ & $-0.674\;(t{=}{-}11.1)$ \\
+Matched placebo (shifted times, tick-signed) & $-0.022\;(t{=}{-}1.2)$ & $-0.088\;(t{=}{-}3.3)$ & $-0.110\;(t{=}{-}2.9)$ \\
+\midrule
+\multicolumn{4}{l}{\emph{Tick-conditioning the aggressive leg (3 min)}} \\
+\quad Aggressive, quote-rule signed & \multicolumn{3}{l}{$+1.232\;(t{=}{+}26.5)$} \\
+\quad Aggressive, pure tick-rule signed & \multicolumn{3}{l}{$-0.064\;(t{=}{-}1.6)$} \\
+\bottomrule
+\end{tabular}
+\caption{Tick-rule placebo tests (470 names, 2023--2024, $235{,}940$ name-days). The placebo
+recovers $5.4\%$ of the at-midpoint markout at three minutes and is statistically zero;
+tick-signing the aggressive population destroys its footprint rather than reversing it.
+Levels in the lower panel are estimated on this run's filter (which additionally requires
+$180$s of within-session history and a valid pre-print quote) and are therefore not directly
+comparable to Table~\ref{tab:decomp}'s $+2.09$; the informative quantity is the
+\emph{within-panel} contrast between the two rows.}
+\label{tab:tickplacebo}
+\end{table}
+
+Neither test supports the artifact reading. The placebo earns $-0.022$ bps at three minutes
+against the at-midpoint row's $-0.411$---$5.4\%$ of it, and statistically indistinguishable
+from zero. At fifteen and thirty minutes the placebo does become significant, but recovers
+only $15\%$ and $16\%$ of the corresponding at-midpoint values, so tick-rule conditioning
+contributes a detectable but small negative drift at longer horizons and essentially none at
+the three-minute horizon the paper's tables use.
+
+The second test is the more informative of the two. Re-signing the aggressive prints by the
+pure tick rule does not turn their footprint negative; it drives it to zero
+($-0.064$, $t=-1.6$, against $+1.232$ under the quote rule). What tick conditioning does is
+\emph{destroy} directional information, not manufacture the appearance of contrarian
+trading. Both results point the same way: the negative markout on at-midpoint hidden prints
+is a property of those executions, not of the classifier applied to them.
+
+We state the residual limitation. These tests establish that the tick rule does not
+manufacture the sign; they do not establish that it recovers the \emph{correct} sign for any
+individual midpoint print, and given the second row above---where tick-signing a known
+population yields nothing---the tick rule is evidently a weak instrument. The at-midpoint
+markout should therefore be read as evidence that this population differs sharply from the
+aggressive one, which is what the bifurcation claims, rather than as a precise estimate of
+uninformed liquidity provision. Signing midpoint prints against a consolidated quote, where
+a print at the NASDAQ midpoint may sit away from the NBBO midpoint and acquire a genuine
+sign, would settle it; see \S\ref{sec:limits}.
+
+\subsection{The bifurcation is not an averaging artifact}
+
+A pooled term structure that is flat could in principle blend continuation in some names
+against reversion in others. Table~\ref{tab:regime_ts} splits the aggressive-hidden term
+structure by price quintile. It does not blend: the markout is flat or gently building in
+every quintile and reverts in none. It is larger in cheap, tick-constrained names ($+3.96$
+bps in Q1 against $+1.42$ in Q5), which Section~\ref{sec:adverse} shows is the spread
+effect.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Price quintile} & \textbf{Avg.\ price} & \textbf{3 min} & \textbf{15 min} & \textbf{30 min} \\
+\midrule
+Q1 (tick-constrained) & \$14 & $+3.96$ & $+4.21$ & $+4.19$ \\
+Q2 & \$34 & $+1.89$ & $+2.62$ & $+2.61$ \\
+Q3 & \$58 & $+1.53$ & $+1.51$ & $+1.46$ \\
+Q4 & \$97 & $+1.53$ & $+1.58$ & $+1.43$ \\
+Q5 (large-price) & \$281 & $+1.42$ & $+1.43$ & $+1.46$ \\
+\bottomrule
+\end{tabular}
+\caption{Aggressive-hidden markout (bps) by price quintile (474 names, 2023--2024,
+$\sim\!44{,}000$ name-days per quintile; all $t>12$). Flat or building in every quintile,
+reverting in none.}
+\label{tab:regime_ts}
+\end{table}
+
+\subsection{The intraday term structure, on a subsample}
+\label{sec:termstructure}
+
+The horizons above stop at thirty minutes. To instrument the rest of the session we extend
+the aggressive-hidden markout to one hour, two hours and the burst-to-close midpoint, and
+net each horizon against a \emph{time-of-day-stratified} placebo that draws each burst's
+counterfactual time within its own 30-minute intraday bucket, so the null preserves the
+U-shaped intensity and drift profile a uniform placebo would ignore.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Aggressive-hidden markout} & \textbf{Burst (bps)} & \textbf{TOD placebo (bps)} & \textbf{Net (bps)} & \textbf{Net $t$ (day)} \\
+\midrule
+3 min    & $+2.023$ & $+0.007$ & $+2.017$ & $+28.3$ \\
+15 min   & $+2.122$ & $-0.022$ & $+2.145$ & $+14.8$ \\
+30 min   & $+2.166$ & $-0.101$ & $+2.268$ & $+15.5$ \\
+1 hour   & $+2.131$ & $-0.145$ & $+2.283$ & $+15.3$ \\
+2 hour   & $+2.076$ & $-0.289$ & $+2.378$ & $+10.3$ \\
+to close & $+2.014$ & $-0.415$ & $+2.433$ & $+10.0$ \\
+\bottomrule
+\end{tabular}
+\caption{Intraday term structure of the aggressive-hidden footprint on the \emph{full panel}
+(470 names, 2023--2024, $\approx\!206{,}070$ name-days after the outlier rule). Each horizon
+is netted against a time-of-day-stratified placebo drawing each burst's counterfactual time
+within its own 30-minute bucket; $t$-statistics are Newey--West on the daily-mean net series.
+The \emph{gross} markout is flat across the whole session---$+2.02$ at three minutes,
+$+2.01$ measured to the close---so the profile does not depend on the placebo to stay level.}
+\label{tab:hidden_term}
+\end{table}
+
+The profile is flat across the entire session on both measures. The gross markout runs
+$+2.02$, $+2.12$, $+2.17$, $+2.13$, $+2.08$, $+2.01$ from three minutes to the close, and the
+placebo is small at every horizon ($|\cdot| \le 0.42$), so the net rises only gently from
+$+2.02$ to $+2.43$. A hidden burst's directional association with price is established within
+roughly three minutes and then neither grows nor decays for the remaining six and a half
+hours.
+
+One structural caveat attaches to the final row and we state it rather than bury it. Every
+other horizon measures a fixed elapsed time, whereas ``to close'' measures to a fixed
+endpoint, so a counterfactual timestamp drawn earlier in its bucket has a systematically
+longer window than the burst it replaces; this is why the placebo drifts monotonically more
+negative with horizon. In the earlier 48-name version of this table that mattered, because
+the gross to-close markout there fell to $+1.42$ and the row netted to $+2.08$ only because
+the placebo was simultaneously more negative. On the full panel it does not: the gross
+markout at the close is $+2.014$, statistically indistinguishable from its three-minute
+value, so the flat profile holds without any placebo adjustment at all.
+
+\subsection{The sign is not a stale-midpoint artifact}
+\label{sec:signrobust}
+
+Because trades are signed against a reconstructed midpoint, a print above a \emph{lagging}
+midpoint could be mechanically classified a buy just before the midpoint ticks up,
+manufacturing a positive markout. Table~\ref{tab:signrobust} re-signs three ways.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Signing rule (3-min aggressive-hidden markout)} & \textbf{bps} & \textbf{NW $t$} \\
+\midrule
+Baseline (midpoint at the trade) & $+2.00$ & $+23.8$ \\
+Staler midpoint (quote 1s earlier) & $-0.02$ & $-0.4$ \\
+Forward midpoint (quote 1s later; look-ahead) & $-1.59$ & $-39.2$ \\
+Outside-the-quote prints only (unambiguous sign) & $+2.09$ & $+12.5$ \\
+\bottomrule
+\end{tabular}
+\caption{Signing robustness (474 names, 2023--2024, $146{,}393$ name-days). Signing against
+a staler midpoint degrades rather than inflates the footprint, the opposite of the
+stale-midpoint prediction; and on prints executing outside the quote, where the sign cannot
+be wrong, the footprint is undiminished.}
+\label{tab:signrobust}
+\end{table}
+
+Signing against a deliberately staler midpoint does not inflate the footprint---it collapses
+it to zero, because a staler midpoint misclassifies more prints, which is the opposite of
+what the stale-midpoint hypothesis predicts. Most directly, restricting to prints executing
+\emph{outside} the prevailing quote, where the aggressor's side is unambiguous regardless of
+any midpoint error, leaves the footprint at $+2.09$ bps ($t=12.5$). The measurement is
+strongest exactly where the sign is most certain.
+
+We record here, and return to in Section~\ref{sec:overstate}, that this outside-the-quote
+subset is also the one on which the pre-print evidence is cleanest---and there it cuts the
+other way.
+
+\section{The Footprint Is an Adverse-Selection Quantity}
+\label{sec:adverse}
+
+\subsection{It scales with the spread, and not with volatility}
+
+If the aggressive footprint is the adverse-selection component of the spread, it carries a
+sharp cross-sectional prediction: it should be a roughly constant \emph{fraction} of the
+quoted half-spread across names, and should track the spread specifically rather than
+volatility, illiquidity or price level generally. This is a stronger test than anything
+that precedes it, because a mechanical or volatility-scaling account does not predict it.
+
+The prediction holds. Across 469 names with at least 100 name-days, the correlation between
+the quoted half-spread and the permanent price-impact component is $+0.85$, and the ratio of
+the two is centered on $0.34$ with an interquartile range of $0.28$--$0.42$. Sorting into
+quintiles by quoted half-spread, the spread ranges over a factor of five ($2.47$ to $12.54$
+bps) while the adverse-selection \emph{share} moves only between $0.29$ and $0.38$.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Regressor (standardized)} & \textbf{(1)} & \textbf{(2)} & \textbf{(3)} \\
+\midrule
+Quoted half-spread & $+0.850$ & & $+0.930$ \\
+                   & $(+34.8)$ & & $(+25.2)$ \\
+Realized volatility & & $+0.573$ & $+0.008$ \\
+                    & & $(+15.0)$ & $(+0.2)$ \\
+$\log$ price & & & $-0.042$ \\
+             & & & $(-0.9)$ \\
+$\log$ dollar volume & & & $+0.224$ \\
+                     & & & $(+4.8)$ \\
+\midrule
+$R^2$ & $0.723$ & $0.328$ & $0.755$ \\
+\bottomrule
+\end{tabular}
+\caption{Cross-name determinants of the permanent price-impact component (465 names,
+2023--2024; all variables standardized, $t$-statistics in parentheses). Univariately both
+the quoted half-spread and realized volatility predict the footprint. Jointly, the spread
+coefficient is undiminished while volatility falls to zero.}
+\label{tab:scaling}
+\end{table}
+
+Column (3) is the discriminating test. Realized volatility predicts the footprint strongly
+on its own ($+0.573$, $t=15.0$). Entered jointly with the quoted half-spread it collapses to
+$+0.008$ ($t=0.2$) while the spread coefficient is if anything larger. The footprint is not
+a volatility phenomenon that happens to appear in wide-spread names; it is a spread
+phenomenon for which volatility was proxying.
+
+One caveat constrains this. Wide-spread names have a coarser effective price grid, so a
+given midpoint move is mechanically larger there, and that channel inflates measured impact
+in wide-spread names in a way we cannot fully separate from the informational one. It does
+not, however, explain the \emph{stability of the ratio} across quintiles, nor the
+disappearance of the volatility coefficient under the spread control, since tick coarseness
+and volatility are themselves positively related.
+
+\subsection{Its share of trading costs}
+
+Table~\ref{tab:spread} places the footprint on the \citet{huangstoll1997} accounting,
+estimated on the aggressive-hidden trades with $\tau = 180$ seconds.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Huang--Stoll component (aggressive-hidden trades)} & \textbf{bps} & \textbf{NW $t$} \\
+\midrule
+Quoted half-spread & $+6.39$ & $+27.4$ \\
+Effective half-spread (taker pays) & $+4.00$ & $+23.5$ \\
+\quad = Price impact (adverse selection) & $+2.02$ & $+32.4$ \\
+\quad + Realized half-spread (provider retains) & $+1.97$ & $+16.2$ \\
+\bottomrule
+\end{tabular}
+\caption{Effective/realized spread decomposition \citep{huangstoll1997} for
+aggressive-hidden trades (474 names, 2023--2024, $203{,}142$ name-days). Reported for the
+\emph{ratio} it yields, not as independent confirmation---see the text.}
+\label{tab:spread}
+\end{table}
+
+We are explicit about what this does and does not add, because it is easy to overstate. The
+Huang--Stoll price-impact component is defined as $D_t(M_{t+\tau} - M_t)$, which is
+\emph{algebraically the markout itself}; the realized half-spread is then the effective
+half-spread minus that quantity. The near-coincidence of the $+2.02$ bps component with the
+$+2.09$ bps markout of Table~\ref{tab:decomp} is therefore not independent corroboration.
+It is the same estimand computed twice on slightly different name-day filters, and any
+claim that the decomposition \emph{confirms} the markout would be circular.
+
+What the decomposition genuinely contributes is the ratio, which the markout alone cannot
+supply: the permanent component is $2.02$ of a $4.00$ bps effective half-spread, or $51\%$
+of what the taker actually pays, and $32\%$ of the $6.39$ bps quoted half-spread. Roughly
+half the effective cost of aggressive hidden execution is compensation for information and
+roughly half is the provider's gross margin.
+
+\subsection{It is incremental to visible order-flow imbalance}
+\label{sec:ofi}
+
+Hidden flow might simply proxy for the visible order-flow imbalance already known to
+forecast short-horizon returns \citep{cont2014}, in which case the footprint would be a
+re-description rather than an addition. We bin each name-day on a fixed ten-second clock
+and regress the forward three-minute midpoint return on quote-rule-signed aggressive-hidden
+volume and on the visible Cont--Kukanov--Stoikov imbalance, both standardized within
+name-day, univariately and jointly.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Predictor of forward 3-min midpoint return} & \textbf{bps per SD} & \textbf{NW $t$} \\
+\midrule
+\multicolumn{3}{l}{\emph{Univariate}} \\
+\quad Aggressive-hidden signed volume & $+0.160$ & $+12.2$ \\
+\quad Visible OFI \citep{cont2014} & $+2.351$ & $+54.6$ \\
+\midrule
+\multicolumn{3}{l}{\emph{Joint}} \\
+\quad Aggressive-hidden signed volume & $+0.198$ & $+22.9$ \\
+\quad Visible OFI & $+2.330$ & $+54.2$ \\
+\bottomrule
+\end{tabular}
+\caption{Hidden flow versus visible order-flow imbalance (474 names, 2023--2024,
+$168{,}556$ name-days, ten-second bins; day-level Fama--MacBeth with Newey--West errors).
+Controlling for visible OFI does not attenuate the hidden-flow coefficient.}
+\label{tab:ofi}
+\end{table}
+
+The hidden-flow coefficient is not attenuated by the control; it \emph{rises}, from $+0.160$
+to $+0.198$ bps per SD, with the $t$-statistic nearly doubling. This requires explanation,
+because two positively correlated regressors that both positively predict the outcome should
+attenuate one another. Enhancement instead indicates classical suppression, which arises
+when the conditional correlation between regressors is negative---and here it is. The
+mechanism is specific to this pair: a hidden \emph{buy} consumes displayed depth at the ask,
+and ask-side depletion enters the Cont--Kukanov--Stoikov imbalance with a \emph{negative}
+sign, so the two carry mildly opposing contemporaneous components even though both forecast
+returns positively.
+
+The magnitude reconciles exactly, which is worth showing because a correlation this small
+looks too weak to move a coefficient by a quarter. For standardized regressors,
+$b_H^{\text{joint}} = (b_H^{\text{uni}} - \rho\, b_O^{\text{uni}})/(1-\rho^2)$, and
+substituting the measured values gives
+$(0.1601 - (-0.0161)(2.3508))/(1-0.0161^2) = 0.1980$ against the $0.1981$ reported. The
+suppression term is $24\%$ of $b_H^{\text{uni}}$ precisely because $b_O^{\text{uni}}$ is
+$14.7$ times larger: a small correlation multiplied by a much larger coefficient is a large
+adjustment \emph{relative to the smaller one}. The implied $\rho$ of $-0.016$ also matches
+the directly measured median name-day correlation of $-0.027$ on the same clock.
+
+Visible OFI is by far the larger short-horizon predictor in absolute terms, an order of
+magnitude above the hidden coefficient, and we do not claim otherwise. The point is only
+that the hidden footprint survives it intact.
+
+\section{Two Non-Informational Accounts}
+\label{sec:alternatives}
+
+\subsection{Information events}
+
+The most natural alternative to an adverse-selection reading is that aggressive hidden
+executions cluster around information events---earnings, guidance, macro releases---and that
+price moves because of the announcement, with the execution a correlate. We obtain quarterly
+earnings dates from Yahoo Finance, retrieved through the \texttt{yfinance} interface, for the
+418 panel names that report ($4{,}925$ announcements over 2023--2024; the remaining 56 are
+ETFs, which do not). We proxy for \emph{unscheduled} news by the magnitude of the name's
+daily return. We note that Yahoo Finance is a retail-grade source for announcement
+timestamps; a commercial calendar would be preferable, and the dates enter only as an
+exclusion window rather than as a treatment variable.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Sample} & \textbf{Footprint (bps)} & \textbf{NW $t$} & \textbf{name-days} \\
+\midrule
+All name-days (earnings-covered names) & $+1.910$ & $+29.3$ & $154{,}577$ \\
+\midrule
+\quad Earnings window ($\pm1$ day) & $+3.002$ & $+13.9$ & $7{,}657$ \\
+\quad Excluding earnings window & $+1.874$ & $+29.6$ & $146{,}920$ \\
+\quad Excluding earnings ($\pm3$ days) & $+1.858$ & $+31.4$ & $141{,}715$ \\
+\midrule
+\quad Largest $10\%$ of daily moves & $+2.959$ & $+27.1$ & $17{,}559$ \\
+\quad Excluding largest $10\%$ of moves & $+1.751$ & $+23.6$ & $143{,}527$ \\
+\midrule
+\textbf{Excluding earnings $\pm2$d \emph{and} top $5\%$ moves} & $\mathbf{+1.760}$ & $\mathbf{+26.8}$ & $143{,}111$ \\
+\bottomrule
+\end{tabular}
+\caption{The footprint after removing information-event windows (474-name panel,
+2023--2024; three-minute quote-rule markout). On the joint-clean subsample---no earnings
+window, no top-decile move, $88\%$ of all name-days---the footprint retains $94\%$ of its
+value.}
+\label{tab:news}
+\end{table}
+
+The confound is not supported. Excluding earnings windows moves the footprint from $+1.910$
+to $+1.874$; excluding the largest decile of daily moves leaves $+1.751$; excluding both,
+retaining $88\%$ of the panel, leaves $+1.760$ against $+1.878$, or $94\%$ retention with
+the $t$-statistic essentially unchanged. The same pattern holds on the Huang--Stoll series
+($+2.02 \to +1.99$).
+
+The event cells are themselves informative rather than a nuisance: the footprint roughly
+doubles around earnings ($+3.00$) and rises monotonically with the size of the daily move
+($+2.96$, $+3.43$, $+3.98$ at the top decile, ventile and percentile). That is what adverse
+selection predicts when more private information is in play, and it is difficult to
+reconcile with a purely mechanical account of the same quantity.
+
+We note the limit. Return magnitude is a coarse proxy for news: it captures unscheduled
+information only insofar as it moved prices that day, and cannot distinguish news arrival
+from a liquidity shock. A timestamped intraday news feed would be the full treatment. What
+the test establishes is that the scheduled-announcement channel accounts for essentially
+none of the measured footprint.
+
+\subsection{Mechanical quote displacement}
+\label{sec:depletion}
+
+The more serious competing account is mechanical. An aggressive execution consumes displayed
+depth; if the level is depleted the best quote moves, the midpoint moves with it, and if the
+level is never replenished the displacement persists. Such an account reproduces every
+stylized fact above---a footprint appearing instantly, never reverting, scaling with the
+spread, largest in coarse-tick names---with no information conveyed. Ratio stability across
+spread quintiles does not discriminate, being equally a prediction of queue geometry.
+
+The test must therefore condition on something known strictly \emph{before} the print. We
+use the pre-trade depletion ratio $d = (\text{trade size}) / (\text{displayed depth at the
+touch, immediately pre-trade})$, both components observed before any price response. The
+mechanical account makes a sharp prediction about $d$: displacement requires consuming the
+queue, so a print taking a small slice of a deep book cannot move the midpoint. The
+informational account makes no such prediction.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccr}
+\toprule
+\textbf{Pre-trade depletion ratio $d$} & \textbf{Markout (bps)} & \textbf{NW $t$} & \textbf{prints} \\
+\midrule
+Q1 (smallest slice of the queue) & $+1.169$ & $+25.0$ & $38.4$M \\
+Q2 & $+1.168$ & $+26.3$ & $38.2$M \\
+Q3 & $+1.289$ & $+28.3$ & $42.8$M \\
+Q4 & $+1.381$ & $+28.5$ & $33.9$M \\
+Q5 (largest) & $+1.426$ & $+35.7$ & $36.9$M \\
+\midrule
+\textbf{$d < 0.10$: consumed $<\!10\%$ of displayed depth} & $\mathbf{+1.134}$ & $\mathbf{+26.3}$ & $46.0$M \\
+$d \geq 1.0$: consumed the entire visible level & $+1.788$ & $+37.2$ & $62.0$M \\
+\midrule
+All aggressive prints & $+1.303$ & $+34.3$ & \\
+\bottomrule
+\end{tabular}
+\caption{Three-minute markout by pre-trade depletion ratio (470 names, 2023--2024,
+$127{,}667$ name-days). Both trade size and displayed depth are measured before the print,
+so the conditioning variable cannot be contaminated by the price response.}
+\label{tab:depletion}
+\end{table}
+
+Prints consuming less than $10\%$ of displayed depth---$24\%$ of aggressive prints, 46
+million of them---carry $+1.134$ bps at $t=26.3$, which is $87\%$ of the unconditional
+average. These trades leave the touch essentially intact, so there is no displacement to
+explain the subsequent move, yet the move is nearly as large as for prints that sweep the
+level entirely. The quintile gradient tells the same story: $d$ rises by orders of magnitude
+from Q1 to Q5 while the footprint rises only $22\%$, whereas a mechanical account predicts
+impact roughly proportional to the fraction of queue consumed, which would put Q1 near zero.
+
+We do not read this as excluding a mechanical component. The gradient is monotone and the
+$d \geq 1.0$ cell is $58\%$ larger than the $d<0.10$ cell, consistent with genuine
+displacement adding to an informational base, and with larger orders being more informed.
+
+A scope note on the construction is essential here, and it limits the test more than we first
+allowed. A type-5 print executes against non-displayed resting liquidity, so when the hidden
+order rests inside the spread the print does not itself consume the displayed queue; $d$ is a
+normalization of trade size by available visible depth, not a literal fraction of the queue
+consumed. A print with $d<0.10$ therefore has \emph{not} been shown to displace nothing---it
+has been shown to be small relative to visible depth, which is compatible with the same
+aggressor's marketable remainder sweeping the touch microseconds later. The mechanical
+channel that actually applies to hidden prints is that sequential sweep, and
+Table~\ref{tab:depletion} does not test it.
+
+\subsection{The sequential-sweep channel}
+\label{sec:sweep}
+
+We therefore observe the sweep directly. For each aggressive hidden print we record the touch
+on the side being taken immediately before the print and again $100$ms later, and call the
+level \emph{swept} if its price moved away or its size more than halved at an unchanged price.
+The channel is common: $29.8\%$ of aggressive hidden prints are followed by a sweep within
+$100$ms.
+
+The measurement requires care, because the obvious test is circular. Conditioning on the
+touch moving inside the first second and then measuring a markout that begins at the print
+conditions on most of the outcome---the footprint is largely impounded within that first
+second, and for a buy a rising ask \emph{is} a rising midpoint. We therefore separate the
+conditioning window from the measurement window: prints are classified on $[t, t+100\text{ms}]$
+alone, and the forward move is measured from $t+1$s and from $t+5$s, strictly after the
+displacement. Table~\ref{tab:sweep} reports both the circular and the clean versions so the
+contamination is visible rather than asserted.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Markout window} & \textbf{Swept} & \textbf{Unswept} & \textbf{Gap} \\
+\midrule
+From $t$ to $t+180$s \emph{(circular; reference only)} & $+3.271\;(58.6)$ & $+0.464\;(22.0)$ & $+2.807$ \\
+\midrule
+From $t+1$s to $t+180$s & $+0.374\;(9.7)$ & $+0.439\;(22.0)$ & $-0.066$ \\
+From $t+5$s to $t+185$s & $+0.203\;(5.8)$ & $+0.260\;(15.1)$ & $-0.057$ \\
+\bottomrule
+\end{tabular}
+\caption{Forward move by whether the touch was swept within $100$ms of the print (470 names,
+2023--2024, $235{,}940$ name-days; bps, NW $t$ in parentheses; median $153$ swept and $378$
+unswept prints per name-day). The first row conditions on a quote move inside the window it
+then measures; the lower two do not. The $18\times$ split in the first row is absent from
+both clean rows.}
+\label{tab:sweep}
+\end{table}
+
+Two findings, and the second is uncomfortable for the reading advanced above.
+
+\textbf{The sweep does not mark differentially informative flow.} Measured from after the
+displacement, swept and unswept prints are indistinguishable, and if anything swept prints
+carry slightly \emph{less} forward move ($+0.374$ against $+0.439$ from $t+1$s; $+0.203$
+against $+0.260$ from $t+5$s). Whatever a sweep signals, it does not predict a larger
+subsequent revision. The apparent $18\times$ concentration is entirely an artifact of the
+overlap between conditioning and measurement.
+
+\textbf{But the level of the measured footprint is concentrated in swept prints, and for
+those prints it coincides with the displacement.} Weighting the from-$t$ row by frequency,
+$29.8\% \times 3.271 + 70.2\% \times 0.464 = 1.30$ bps, reproducing the all-print average of
+Table~\ref{tab:depletion}; of that, $75\%$ comes from the swept minority. And for swept
+prints almost the whole of it occurs inside the first second ($+3.271$ from $t$ against
+$+0.374$ from $t+1$s), which is exactly when the touch moves. We therefore withdraw the
+claim, made in an earlier version of this section, that displacement cannot account for the
+level of the footprint. On the direct test it accounts for a majority of it.
+
+What this does \emph{not} establish is that the footprint is uninformative, and the
+distinction matters. An aggressor whose order exceeds displayed depth sweeps the touch, and
+an aggressor who wants more liquidity than is displayed is plausibly one who knows something;
+under the Glosten--Milgrom mechanism the quote moving as informed flow takes liquidity is the
+price-discovery process, not an artifact of it. ``Mechanical displacement'' and ``information
+impounded through the trade'' are the same event at a $100$-millisecond resolution, and
+nothing in this design separates them. What survives cleanly is the unswept population:
+$70\%$ of aggressive hidden prints, displacing nothing at the touch, carrying $+0.464$ bps
+from the print and $+0.439$ from a second after it. That is a real but small footprint, and
+it is the most conservative reading of the level our data supports.
+
+\section{What Unconditional Markouts Overstate}
+\label{sec:overstate}
+
+Everything above is a forward markout: a measurement of where price goes from the print. A
+forward markout cannot distinguish response from continuation. If conditioning on aggressive
+same-side execution selects moments at which the midpoint is already travelling in that
+direction, the markout measures a move already underway. This section tests that directly
+and reports that it is substantially true.
+
+\subsection{The event-time profile}
+
+Table~\ref{tab:preprint} measures the signed midpoint move over windows \emph{ending} at the
+print as well as the forward markout.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Signed midpoint move (bps)} & \textbf{All aggressive} & \textbf{Outside the quote} \\
+\midrule
+$-180$s $\rightarrow$ $t$ & $-1.541$ $(-60.6)$ & --- \\
+$-30$s $\rightarrow$ $t$ & $-1.715$ $(-56.7)$ & $+1.195$ $(+35.6)$ \\
+$-5$s $\rightarrow$ $t$ & $-1.783$ $(-50.2)$ & $+0.965$ $(+23.6)$ \\
+\midrule
+$t$ $\rightarrow$ $+180$s (the markout) & $+1.159$ $(+35.2)$ & $+1.322$ $(+27.3)$ \\
+\bottomrule
+\end{tabular}
+\caption{Event-time profile around aggressive hidden prints (468 names, $206{,}235$
+name-days; NW $t$-statistics in parentheses). Moves are signed by trade direction, so a
+positive pre-print figure means price was already travelling \emph{with} the trade before it
+arrived. The two columns disagree in sign; the outside-the-quote column is the informative
+one.}
+\label{tab:preprint}
+\end{table}
+
+\textbf{The pooled column is contaminated and should not be read.} On all aggressive prints
+the pre-print drift is strongly negative, appearing to show price moving against the trade
+before it arrives. This is an artifact of sign assignment. A print is classified a buy when
+it executes above the \emph{contemporaneous} midpoint, so a print at an unchanged price is
+mechanically labelled a buy whenever the midpoint has just fallen. Falling-midpoint-then-buy
+is built into the classification, and the negative pre-drift is the stale-midpoint problem
+of Section~\ref{sec:signrobust} reappearing in event time rather than evidence of contrarian
+trading.
+
+\textbf{The outside-the-quote column reverses it.} On prints executing beyond the prevailing
+quote, where the aggressor's identity cannot be mistaken, price moves \emph{with} the trade
+direction before it arrives: $+1.195$ bps over the preceding thirty seconds ($t=35.6$) and
+$+0.965$ over the preceding five. Over the window $[-30\text{s},+180\text{s}]$ the signed
+move totals $+2.52$ bps, of which $47.5\%$ occurs before the print.
+
+\subsection{Is the markout continuation of the pre-drift?}
+\label{sec:decomposition}
+
+The accounting above shows that roughly half the signed move precedes the print. It does
+\emph{not} show that the forward markout is continuation of that pre-drift, and the two are
+different claims: the first is about where the move sits in event time, the second about
+whether the pre-drift predicts the post-print move. We test the second directly. Within each
+name-day we regress the signed forward markout on the signed pre-print drift over the
+preceding thirty seconds,
+\begin{equation}
+m_h \;=\; a_h \;+\; b_h\, d \;+\; \varepsilon,
+\qquad\text{so that}\qquad
+\overline{m_h} \;=\; a_h \;+\; b_h\, \overline{d}
+\label{eq:decomp}
+\end{equation}
+holds exactly within the name-day. The intercept $a_h$ is the component of the markout
+orthogonal to the prior price path---the quantity a path-conditioning estimator such as the
+VAR is designed to isolate---and $b_h\overline{d}$ is the part attributable to continuation.
+Averaging both across the panel decomposes the reported markout into two pieces that sum to
+it by construction.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+& \textbf{3 min} & \textbf{10 min} & \textbf{30 min} \\
+\midrule
+\multicolumn{4}{l}{\emph{Outside-the-quote prints} (mean pre-drift $\overline{d} = +1.301$, $t=+37.0$)} \\
+\quad Markout $\overline{m_h}$ & $+1.379\;(32.0)$ & $+1.228\;(23.4)$ & $+1.067\;(16.3)$ \\
+\quad Orthogonal to pre-drift, $a_h$ & $+1.407\;(36.0)$ & $+1.285\;(24.2)$ & $+1.154\;(17.3)$ \\
+\quad Continuation, $b_h\overline{d}$ & $-0.028\;(-1.9)$ & $-0.057\;(-3.1)$ & $-0.088\;(-3.2)$ \\
+\midrule
+\multicolumn{4}{l}{\emph{All aggressive prints} (mean pre-drift $\overline{d} = -1.684$, $t=-55.6$)} \\
+\quad Markout $\overline{m_h}$ & $+1.153\;(36.5)$ & $+1.099\;(24.8)$ & $+1.030\;(16.9)$ \\
+\quad Orthogonal to pre-drift, $a_h$ & $+1.005\;(28.9)$ & $+0.885\;(21.5)$ & $+0.756\;(11.9)$ \\
+\quad Continuation, $b_h\overline{d}$ & $+0.148\;(7.8)$ & $+0.215\;(9.7)$ & $+0.274\;(13.8)$ \\
+\bottomrule
+\end{tabular}
+\caption{Decomposition~\eqref{eq:decomp} of the forward markout into a component orthogonal
+to the preceding thirty seconds of price movement and a continuation component (470 names,
+2023--2024; $119{,}483$ name-days outside-the-quote, $201{,}271$ all-aggressive; bps, NW $t$
+in parentheses). Rows sum to the markout by construction. On the clean outside-the-quote
+population the continuation component is economically zero and slightly \emph{negative}: the
+pre-drift does not forecast the post-print move.}
+\label{tab:decomposition}
+\end{table}
+
+The result is not what the event-time accounting led us to expect. On the outside-the-quote
+population---the one where the sign cannot be wrong---price does drift $+1.301$ bps into the
+print, but that drift carries essentially none of the forward markout. The continuation
+component is $-0.028$ bps at three minutes, $-2\%$ of the total and of the wrong sign, and
+reaches only $-0.088$ at thirty. The slope $b_h$ is mildly negative throughout: prints
+arriving after a \emph{larger} run-up are followed by slightly \emph{smaller} forward moves,
+not larger ones. Essentially the entire markout is orthogonal to the prior path. The
+all-aggressive column tells the same story with the sign of $\overline{d}$ flipped by the
+contamination described above, and a continuation share of $13$--$27\%$.
+
+Two conclusions follow, and they pull in opposite directions.
+
+\textbf{The specific reverse-causality mechanism is not supported.} ``The markout measures
+continuation of a move already underway'' makes a testable prediction---that conditioning on
+the move already underway should absorb the markout---and the prediction fails. Roughly half
+the signed move does precede the print, but the two halves are not the same phenomenon: the
+pre-drift is uninformative about what follows.
+
+\textbf{This does not restore a causal reading, and it does not reconcile the VAR.} Ruling
+out one confound is not identification: flow may still be selected on information the
+observable price path does not reveal, and \eqref{eq:decomp} conditions on a single
+thirty-second summary of that path rather than on its full history. We therefore retain the
+association language of \S\ref{sec:intro}.
+
+\subsection{Consequences}
+
+First, we make no causal claim. What we report is an association between aggressive hidden
+execution and contemporaneous price discovery, with the direction of causality unresolved.
+
+Second---and we correct an earlier reading of our own evidence here---the pre-print drift
+does \emph{not} reconcile the markout with the structural benchmark. Table~\ref{tab:hasbrouck}
+reports a \citet{hasbrouck1991} permanent--transitory VAR, re-estimated on one-minute bins
+with 30 lags so that the horizons of interest lie inside the model's memory rather than
+beyond it, with ridge shrinkage in place of discarding explosive fits and all name-days
+retained rather than conditioning on stationarity. The cumulative response peaks within a
+minute, is barely distinguishable from zero at three, and turns significantly negative by
+ten and thirty. The natural reading---that the VAR conditions on the prior return path while
+the markout does not, so the gap is the pre-drift---is the one Table~\ref{tab:decomposition}
+rules out: conditioning on the prior path removes essentially none of the markout. What
+separates the two estimators is therefore specification, not contamination, and
+Table~\ref{tab:vargrid} identifies which feature of the specification is responsible.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Cumulative response to a 1-SD flow innovation} & \textbf{bps} & \textbf{NW $t$} & \textbf{95\% CI} \\
+\midrule
+1 minute  & $+0.031$ & $+7.80$ & $[+0.024, +0.039]$ \\
+3 minutes & $+0.015$ & $+2.27$ & $[+0.002, +0.029]$ \\
+10 minutes & $-0.046$ & $-4.17$ & $[-0.068, -0.025]$ \\
+30 minutes & $-0.195$ & $-6.57$ & $[-0.253, -0.137]$ \\
+\bottomrule
+\end{tabular}
+\caption{Re-estimated \citet{hasbrouck1991} VAR: one-minute bins, 30 lags (30 minutes of
+model memory), ridge shrinkage, all name-days retained (473 names, $121{,}252$ name-days).
+The stationary-only subsample gives the same pattern ($-0.049$ at 10 minutes, $-0.160$ at
+30). Magnitudes are not comparable to the markout in levels---ridge shrinkage attenuates the
+coefficients and the response is denominated per flow-innovation standard deviation on a
+one-minute clock---so we read the sign and shape, not the scale.}
+\label{tab:hasbrouck}
+\end{table}
+
+Two features distinguish the current specification from the earlier one that reported a
+permanent response: the sampling clock together with the induced memory horizon, and ridge
+shrinkage. Table~\ref{tab:vargrid} crosses them.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Specification} & \textbf{3 min} & \textbf{10 min} & \textbf{30 min} & \textbf{\% stat.} \\
+\midrule
+10s clock, 12 lags, no ridge & $+0.043\;(10.0)$ & $+0.047\;(9.4)$ & $+0.047\;(9.0)$ & $99\%$ \\
+10s clock, 12 lags, ridge & $+0.042\;(9.9)$ & $+0.046\;(9.6)$ & $+0.048\;(10.6)$ & $99\%$ \\
+60s clock, 30 lags, no ridge & $+0.017\;(2.6)$ & $-0.047\;(-4.1)$ & $-0.145\;(-9.5)$ & $88\%$ \\
+60s clock, 30 lags, ridge & $+0.015\;(2.4)$ & $-0.051\;(-4.8)$ & $-0.149\;(-9.4)$ & $89\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Cumulative VAR response to a one-SD flow innovation (bps) across the $2\times2$
+specification grid (470 names, 2023--2024; NW $t$ in parentheses; responses trimmed at
+$|\cdot|\le50$ bps, since non-stationary fits on the one-minute clock have heavy tails---at a
+$10^4$ trim the three-minute and ten-minute columns are unchanged while the thirty-minute
+column becomes noise, $t$ between $-1.9$ and $+1.4$). Rows 1--2 and 3--4 are within a
+rounding error of one another; rows 1 and 3 differ in sign.}
+\label{tab:vargrid}
+\end{table}
+
+The comparison is unambiguous. Ridge shrinkage does nothing: holding the clock fixed, the
+responses agree to the third decimal at every horizon. The clock does everything: at ten and
+thirty minutes the one-minute specification is negative and the ten-second specification is
+positive.
+
+The reason is visible in the first row. A VAR(12) on a ten-second clock carries $120$ seconds
+of memory, so responses requested at three, ten and thirty minutes all lie beyond the model's
+horizon and return its asymptote---which is why that row reports $+0.043$, $+0.047$, $+0.047$,
+the same number three times. The apparent permanence of the original specification was not an
+estimate of behaviour at ten and thirty minutes; it was the model's fixed point, reported at
+horizons it could not see. Only the one-minute clock with thirty lags places those horizons
+inside the estimable range, and there the response decays and turns negative.
+
+This resolves what the specification difference is, and it removes the earlier estimate as
+evidence for permanence. It does not resolve the disagreement with the markouts, which
+remains: a path-conditioning estimator with genuine memory finds decay where the direct
+measurement finds none, and \S\ref{sec:decomposition} has already shown that the obvious
+bridge between them---continuation of pre-print drift---does not carry the weight. We report
+the VAR as a negative result, do not cite it as corroborating permanence, and leave the
+disagreement open.
+
+Third, the post-print component is not zero and is not inflated by the pre-drift: $+1.379$
+bps at three minutes on the clean population, of which $+1.407$ is orthogonal to the
+preceding thirty seconds. Something happens after the print that does not happen before it,
+and it is not a continuation of what happened before it.
+
+Establishing that it is \emph{caused} by the print would require variation in flow unrelated
+to the information environment, which this design does not provide;
+Table~\ref{tab:decomposition} removes one specific alternative rather than delivering
+identification. We record the causal question as open, and note that it does \emph{not} bear
+on the bifurcation of Section~\ref{sec:bifurcation}, which compares two contemporaneous
+populations rather than claiming what an execution does to prices.
+
+\section{Scope and Limits}
+\label{sec:limits}
+
+\subsection{One venue}
+
+This is the binding limitation and we state it first. LOBSTER reconstructs the NASDAQ book
+alone, so every midpoint, quote and depth here is NASDAQ's rather than the consolidated
+NBBO. The pre-print evidence of Section~\ref{sec:overstate} makes this first-order rather
+than incidental: $+1.195$ bps of pre-drift followed by $+1.322$ bps of post-print move is
+equally consistent with adverse selection and with the NASDAQ midpoint lagging the NBBO
+while aggressive flow routes to hidden liquidity at prices that are already stale. The two
+readings are observationally equivalent in single-venue data.
+
+Re-signing and re-marking against a consolidated quote is therefore the natural next step
+and, in our view, a precondition for interpreting the \emph{magnitudes} in this paper as
+price discovery. We state what that work is rather than gesturing at it, since the data are
+standard rather than exotic: millisecond TAQ carries the NBBO, the re-run requires
+classifying the same type-5 prints against the consolidated quote in place of the NASDAQ
+quote and re-marking the same horizons, and no new estimator is involved. Every magnitude
+in Sections~\ref{sec:bifurcation}--\ref{sec:overstate} would be re-estimated under it. We
+report the present results as provisional on that comparison.
+
+The bifurcation is unaffected in kind: a contemporaneous comparison between two populations
+observed on the same feed does not depend on whether that feed leads or lags a consolidated
+one. It would, however, be \emph{sharpened} by consolidated data in one specific way. Our
+at-midpoint population is defined by the NASDAQ midpoint, and a print at that midpoint may
+sit away from the NBBO midpoint, where it would acquire a genuine quote-rule sign instead of
+falling back on the tick rule---which \S\ref{sec:tickplacebo} shows to be a weak instrument.
+Consolidated signing would therefore reclassify some of the at-midpoint population and
+replace the paper's weakest classifier on its second-largest table.
+
+\subsection{Horizon}
+
+Every markout here is measured within a single session, at most $6.5$ hours. We therefore
+describe the aggressive footprint as intraday-persistent rather than permanent, and test
+separately whether it reverts over the following month.
+
+An earlier version of this test sorted names cross-sectionally on the day's signed
+aggressive-hidden flow and measured the signed return from that day's close to $k$ days
+later, using non-overlapping formation dates. At $k=20$ that leaves roughly $25$ independent
+cohorts, and we reported a point estimate of $-8.4$ bps with $t=-1.1$ as underpowered but
+uncomfortable. That estimate turns out to be an artifact of the design rather than a weak
+signal. Because the non-overlapping sample retains only every twentieth formation date, the
+estimate depends on \emph{which} phase one starts from: sweeping the starting offset across
+all twenty phases of the same data moves the twenty-day figure from $-36.2$ to $+25.5$ bps, a
+spread of $61.6$ bps with no change to signal, weights, or estimator. The published number
+was one draw from that spread.
+
+The efficient design is a calendar-time portfolio with overlapping holds. On each day the
+book holds the $k$ cohorts formed on each of the previous $k$ days at $1/k$ weight, so every
+trading day contributes an observation on a diversified portfolio rather than every $k$-th
+day contributing one to a sparse sort; the $k$-day cumulative return is $k$ times the mean
+daily portfolio return, and inference runs on the daily series. Weights are the same
+cross-sectionally demeaned, unit-gross-exposure book used throughout.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Horizon} & \textbf{Cumulative (bps)} & \textbf{NW $t$} & \textbf{Daily (bps)} \\
+\midrule
+1 day & $-0.69$ & $-0.55$ & $-0.688$ \\
+2 days & $-0.36$ & $-0.32$ & $-0.181$ \\
+3 days & $-0.50$ & $-0.37$ & $-0.166$ \\
+5 days & $-1.11$ & $-0.42$ & $-0.222$ \\
+10 days & $-1.08$ & $-0.34$ & $-0.108$ \\
+20 days & $-1.95$ & $-0.40$ & $-0.098$ \\
+\bottomrule
+\end{tabular}
+\caption{Multi-day behaviour after the burst day, calendar-time portfolio with overlapping
+$k$-day holds (2023--2024 hidden panel, 474 names, 501 daily observations at every horizon;
+Newey--West, 10 lags). No horizon shows significant reversion and every point estimate lies
+within $2$ bps of zero. The corresponding non-overlapping sort at twenty days ranges from
+$-36.2$ to $+25.5$ bps across starting phases of the same data; its average across phases,
+$-1.1$ bps, agrees with the calendar-time estimate here.}
+\label{tab:multiday}
+\end{table}
+
+Under the efficient design the multi-day picture is quiet. Every point estimate lies within
+$2$ bps of zero, none approaches significance, and the twenty-day figure is $-1.95$ bps
+against an intraday footprint of roughly $+2$. The reversion that the earlier design appeared
+to show does not survive using all of the data rather than a twentieth of it.
+
+We do not overstate what this settles. The standard error at twenty days is still about
+$4.9$ bps, so a reversion of the order of the footprint itself remains inside the confidence
+interval; what has been removed is the evidence \emph{for} such a reversion, not the
+possibility of one. The honest statement is that the footprint is measured intraday, that
+nothing detectable happens to it over the following month, and that the earlier suggestion
+otherwise was a design artifact we have now corrected.
+
+\subsection{Universe}
+
+The name list is fixed by a liquidity screen among the tickers the LOBSTER archive stages,
+and that staged set is itself survivor-conditioned: names that later delisted are absent
+from the files we can reach rather than present as truncated series. The universe is
+therefore not point-in-time.
+
+The consequence is asymmetric across our claims and we separate them. The bifurcation of
+Section~\ref{sec:bifurcation} is estimated \emph{within} name-days---aggressive against
+at-midpoint prints of the same name on the same day---so a missing tail of names cannot
+generate it. The cross-sectional \emph{magnitudes}, by contrast, including the level of the
+footprint and the spread-scaling slope, are estimated on a panel missing exactly the
+wide-spread, distressed tail where adverse selection should be most severe, and do not carry
+a population interpretation. Whether the delisted names' order flow is retrievable from the
+vendor is a question we have not settled.
+
+\subsection{Attribution}
+
+We observe anonymous message-level executions, not trader identities. There are no parent
+orders, no broker records, and no linkage to holdings. We therefore make no claim about who
+submits these executions, and in particular do not identify them with institutional
+metaorders; where that literature is invoked it is as a comparison of magnitudes. The party
+bearing the adverse-selection cost is whoever posted the hidden resting order, which may be
+a designated market maker or an institution resting size, and the data cannot distinguish
+them.
+
+\subsection{Interpretation}
+
+Finally, we separate the facts from the mechanism. That the footprint is a stable fraction
+of the quoted half-spread is a measurement. That the spread is \emph{set} to compensate
+providers for it is the Glosten--Milgrom interpretation, which our evidence is consistent
+with but does not establish: we have not tested the causal direction between spread and
+adverse selection, and both could respond to a common factor. We report the stable ratio as
+a fact and the equilibrium mechanism as a reading of it.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Hidden liquidity on a single venue is informationally bifurcated. Executions with an
+identifiable aggressor are associated with a $+2.09$ bps signed midpoint move that is flat
+from three minutes to the close across the full cross-section; executions at the midpoint
+carry $-0.42$ bps. Any classifier that
+force-signs midpoint prints averages the two and reports something close to zero, which is
+why the informativeness of hidden liquidity cannot be stated as one number. This is the
+self-selection equilibrium of \citet{zhu2014} measured inside one venue and one order type,
+where the confounds of a cross-venue comparison are absent.
+
+The aggressive footprint behaves as an adverse-selection quantity. It is roughly one third
+of the quoted half-spread and holds that share across a fivefold range of spread widths;
+volatility, which predicts it univariately, contributes nothing once the spread is
+controlled; it is $51\%$ of the effective half-spread on the Huang--Stoll accounting; it is
+incremental to visible order-flow imbalance; and it survives the removal of
+information-event windows. Mechanical displacement is the one alternative we cannot dismiss:
+the majority of the measured level sits in the $30\%$ of prints whose touch is swept within
+$100$ms and coincides with that sweep, and at that resolution displacement and
+information taken through the trade are the same event.
+
+What it is not is a tradable signal, and the reason is structural rather than incidental. A
+quantity that holds a fixed proportion of the spread across the cross-section is not a
+mispricing awaiting arbitrage; capturing it requires being the liquidity provider, and the
+liquidity provider is already compensated by the spread that contains it. Our own attempt to
+convert the footprint into a signal is consistent with this and is not reported here.
+
+Two results limit the reading. Nearly half the signed move precedes the print on the cleanest
+subset available, and a properly specified VAR conditioning on the prior return path finds no
+lasting response. We therefore report an association rather than an impact. We are able to
+rule out the mechanism that would tie those two facts together---decomposing the markout
+against the pre-print drift leaves it essentially untouched, so it is not continuation of a
+move already underway---but ruling out one alternative is not identification, and the
+disagreement with the structural benchmark is left open rather than explained. And because
+the book is NASDAQ's alone, we cannot separate price discovery from a local midpoint
+adjusting toward a consolidated quote that moved first. The bifurcation survives all of
+this; the magnitudes await a consolidated feed.
+
+\bibliography{references}
+
+\end{document}
