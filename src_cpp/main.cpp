@@ -626,7 +626,9 @@ int main(int argc, char* argv[]) {
 
         // 4. Compute peak impact (tau_max) and forward-return mid-prices
         std::ostringstream day_csv;
-        for (auto& [b, ms] : day_bursts) {
+        for (auto& entry : day_bursts) {
+            auto& b = entry.first;
+            auto& ms = entry.second;
             b.peak_price = find_peak_price(mid_snapshots, b.start_time, b.start_price, tau_max, b.direction);
 
             BurstRecord rec;

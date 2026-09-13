@@ -1,11 +1,8 @@
-# Walkthrough — 500-Ticker HPC Refactor & Referee-Mandate Upgrade
+# Historical pipeline checks
 
-This document maps every change made in this revamp to the referee mandates it
-satisfies, then gives the **single-ticker smoke-test** procedure to run before
-launching the full 500-ticker Hoffman2 job, plus the automated validation tests.
-
-Reports referenced: `referee_report_bursts_claude.pdf` (issues **M1–M10**) and
-`referee_report_addendum.pdf` (reframes **R1–R6**, borrowable elements **B1–B12**).
+This note records checks from an earlier pipeline revision. Its issue labels
+refer to the review used for that revision. Use VERIFIED_RESULTS.md for current
+findings and exclusions, and REPRODUCING.md for the offline code checks.
 
 ---
 
@@ -132,7 +129,7 @@ python3 src_py/aggregate_results.py --results-dir results/ --universe-file unive
 
 ---
 
-## 5. Open items requiring user input (from prompt.md)
+## 5. Historical open items
 
 - **Full 500 list**: `universes/full_500.txt` currently holds ~128 names (train ∪ OOS).
   The orchestrator materializes the remaining names from `lobster2:/lobster/manifest.csv`; append

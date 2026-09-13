@@ -29,8 +29,12 @@ SCALE = 10000.0  # LOBSTER integer price -> dollars
 
 
 def reconstruct(msg_path):
-    """Return (bbo_t, bbo_mid, bbo_bid, bbo_ask, trades) for one day.
-    trades: structured arrays t, sign(+1 buy aggressor), size, hidden(bool), price."""
+    """Return quote times, mids, bids, asks, sizes, OFI, and trade arrays.
+
+    Trades contain time, direction, size, and a hidden flag. Visible direction
+    is the aggressor side. Hidden direction is a legacy placeholder; research
+    analyses must infer it using their stated quote or tick convention.
+    """
     df = pd.read_csv(msg_path, header=None, usecols=[0, 1, 3, 4, 5],
                      names=["t", "ty", "sz", "px", "dr"])
     t = df["t"].to_numpy(float); ty = df["ty"].to_numpy(np.int8)
