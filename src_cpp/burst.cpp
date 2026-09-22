@@ -2,6 +2,11 @@
 #include <cmath>    // Required for std::abs, std::exp, std::sqrt
 #include <numeric>  // Required for std::accumulate
 
+// LEGACY/PROVENANCE ONLY.  This detector consumes execution messages and interprets the
+// type-5 Direction field, so it is not an economic-child-order reconstruction.  New research
+// must use src_py/execution_packets.py before forming fragments.  Retained to reproduce the
+// original Phase-1 pipeline, not as an active estimator.
+
 BurstDetector::BurstDetector(double silence_threshold, double min_volume_threshold, double direction_threshold,
                              double volume_ratio_threshold,
                              double hawkes_beta, double trigger_intensity) 

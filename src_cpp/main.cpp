@@ -228,7 +228,7 @@ void print_usage(const char* prog) {
               << "                  14-day avg RTH trade volume         (default: 0.0001)\n"
               << "  -d <direction>  direction count-ratio threshold    (default: 0.9)\n"
               << "  -r <vol_ratio>  volume ratio cap for directional   (default: 0.5)\n"
-              << "  -k <kappa>      kappa filter parameter             (default: 0.5)\n"
+              << "  -k <kappa>      DEPRECATED future-return gate; must be 0 (default: 0)\n"
               << "  -t <tau_max>    peak-impact horizon in seconds     (default: 10.0)\n"
               << "  -j <workers>    number of parallel day workers     (default: 1)\n"
               << "  -b <rth_start>  RTH start in sec-past-midnight     (default: 34200 = 09:30)\n"
@@ -264,7 +264,7 @@ int main(int argc, char* argv[]) {
     double volume_fraction     = 0.0001;
     double direction_threshold = 0.9;
     double volume_ratio_threshold = 0.5;  // minority_vol / majority_vol cap for directional classification
-    double kappa               = 0.5;
+    double kappa               = 0.0;
     double tau_max             = 10.0;  // microstructure horizon for peak impact
     double rth_start            = RTH_DEFAULT_START;
     double rth_end              = RTH_DEFAULT_END;
@@ -288,6 +288,12 @@ int main(int argc, char* argv[]) {
         else if (opt == "-H") hawkes_beta         = std::stod(argv[i+1]);
         else if (opt == "-I") trigger_intensity   = std::stod(argv[i+1]);
         else if (opt == "-w") cancel_window       = std::stod(argv[i+1]);
+    }
+
+    if (kappa != 0.0) {
+        std::cerr << "Error: nonzero -k is disabled. Future returns may be output as labels, "
+                  << "but may not select burst membership. Use -k 0.\n";
+        return 1;
     }
 
     // ── Discover day files ──────────────────────────────────
@@ -659,13 +665,6 @@ int main(int argc, char* argv[]) {
             rec.d_b = (dcount > 0)
                 ? (dsum / dcount)
                 : std::numeric_limits<double>::quiet_NaN();
-
-            // Apply kappa filter here to drop bursts before output
-            if (kappa > 0.0) {
-                if (std::isnan(rec.d_b) || rec.d_b < kappa) {
-                    continue;
-                }
-            }
 
             rec.mkt       = ms;
             day_csv << rec.ticker << "," << rec.date << ","

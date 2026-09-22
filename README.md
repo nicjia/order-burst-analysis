@@ -61,3 +61,7 @@ The original C++ detector uses a self-exciting decaying counter as a burst-clust
 LOBSTER reconstructs NASDAQ alone, so local quote movement cannot be cleanly separated from adjustment to a consolidated quote. Trade signs and burst formation can condition on price movement. The main panel's universe and archive coverage limit generalization. Trader identities and parent orders are not observed.
 
 Earlier strategy work failed statistical or design checks documented in the verified record. Historical tables require licensed data; the synthetic tests do not validate those empirical estimates.
+
+## Results and reconstruction
+
+See [result definitions and code paths](RESULTS.md) for the sample, signing conventions, packet reconstruction, and the legacy detector’s disabled future-return gate.
