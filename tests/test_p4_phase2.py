@@ -10,7 +10,10 @@ import p4_phase2 as P2  # noqa: E402
 
 class Phase2ExportTest(unittest.TestCase):
     def test_hgb_export_matches_sklearn_with_missing(self):
-        from sklearn.ensemble import HistGradientBoostingRegressor
+        try:
+            from sklearn.ensemble import HistGradientBoostingRegressor
+        except ImportError:
+            self.skipTest("needs scikit-learn")
         rng = np.random.default_rng(0)
         X = rng.normal(size=(20000, 6))
         X[rng.random(X.shape) < 0.05] = np.nan

@@ -6,6 +6,10 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src_py"))
+try:
+    import scipy  # noqa: F401  (program_score needs scipy.optimize)
+except ImportError:
+    raise unittest.SkipTest("needs scipy")
 import program_score as PS  # noqa: E402
 
 

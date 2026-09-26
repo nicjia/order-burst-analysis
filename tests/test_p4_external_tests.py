@@ -11,7 +11,10 @@ import p4_external_tests as X  # noqa: E402
 
 class ExternalTestsTest(unittest.TestCase):
     def test_cluster_ols_matches_reference(self):
-        import statsmodels.api as sm
+        try:
+            import statsmodels.api as sm
+        except ImportError:
+            self.skipTest("needs statsmodels")
         rng = np.random.default_rng(0)
         n, G = 2000, 80
         g = rng.integers(0, G, n)

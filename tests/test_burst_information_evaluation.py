@@ -7,6 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src_py"))
+try:
+    import joblib, sklearn  # noqa: F401  (evaluate_burst_information needs both)
+except ImportError:
+    raise unittest.SkipTest("needs scikit-learn and joblib")
 from evaluate_burst_information import audit_inputs, day_stat, nonoverlap
 
 
