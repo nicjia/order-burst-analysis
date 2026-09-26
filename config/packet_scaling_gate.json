@@ -1,0 +1,58 @@
+{
+  "name": "packet-scaling-2025-v1",
+  "frozen_before_inspecting_2025": true,
+  "extractor": "src_py/packet_spread_scaling.py",
+  "extractor_sha256_12": "ebfeb86f6c76",
+  "training_panel": {
+    "arrays": [14610572, 14610573],
+    "group": "results/packet_scaling",
+    "names": 474,
+    "name_days": 228927,
+    "dates": 500,
+    "date_min": 20230103,
+    "date_max": 20241231
+  },
+  "reference_estimates_2023_2024": {
+    "all_mk3_t0": {
+      "slope": 0.6290, "slope_t": 26.39,
+      "intercept": -0.1106, "intercept_t": -1.60,
+      "r2": 0.830, "ratio_median": 0.590,
+      "names_clearing_round_trip": 0, "names": 474
+    },
+    "run3_mk3_t0_level": 0.834,
+    "clust3_mk3_t0_level": 0.821
+  },
+  "gates": {
+    "G1_no_fixed_bps_component": {
+      "statistic": "all_mk3_t0 intercept HC1 t",
+      "pass_if": "t < 2.0",
+      "rationale": "A significantly positive intercept would mean a spread-independent component exists, so a tight-spread name could clear the cost. This is the economic claim under test."
+    },
+    "G2_scaling_is_real": {
+      "statistic": "all_mk3_t0 slope HC1 t",
+      "pass_if": "t > 5.0",
+      "rationale": "The markout must actually scale with the half-spread rather than be unrelated noise."
+    },
+    "G3_none_clear_cost": {
+      "statistic": "share of names with mean markout > 2 x mean half-spread",
+      "pass_if": "share <= 0.01",
+      "rationale": "The tradeability claim. Allows a 1% tolerance rather than requiring exactly zero out of sample."
+    },
+    "G4_no_formation_circularity": {
+      "statistic": "abs(run3 mk3_t0 - clust3 mk3_t0) panel level, bps",
+      "pass_if": "<= 0.15",
+      "rationale": "Sign-conditioned and timing-only formation must continue to agree. Divergence would mean the law is a construction artifact in 2025 even though it was not in 2023-24."
+    },
+    "G5_slope_transports": {
+      "statistic": "abs(2025 slope - 0.6290)",
+      "pass_if": "<= 0.20",
+      "rationale": "The law must reproduce quantitatively, not merely in sign, on a year never used."
+    }
+  },
+  "decision_rule": "All five gates pass -> VERIFIED_RESULTS 1.21 is promoted to out-of-sample confirmed and becomes the paper's spine. Any gate fails -> record the failure verbatim, do not re-specify, do not tune, and do not build the paper on the law.",
+  "prohibited": [
+    "inspecting 2025 outputs before the gate is applied",
+    "changing definitions, horizons, filters or the gate after seeing 2025",
+    "re-running with different parameters to obtain a pass"
+  ]
+}
