@@ -1531,6 +1531,475 @@ evidence is an absence of significant reversion on an underpowered test, not a d
 of none. Two items new data alone can settle remain: signing against the consolidated (SIP)
 NBBO rather than the reconstructed NASDAQ midpoint, and a survivorship-complete panel.
 
+
+\section{Burst-information and reconstruction checks, September 2026}
+\label{sec:burstinformation2026}
+
+This internal update records exploratory work on years already used elsewhere in the project;
+nothing here is a confirmation on a new sample. A 36-instrument screen (24 instruments trained in
+2023, evaluated in 2024 together with 12 held-out instruments; 1,410 available instrument-days and
+64,618 sampled decision landmarks) compared flow/book-state forecasts with and without burst
+characteristics at the third packet, the sixth packet and the recognized end of a burst, with
+all outcomes starting one second after the decision.
+
+The screen's model comparisons do not measure what they were designed to measure, for two
+reasons established after its results were read. First, none of its forecasts of signed
+midpoint returns or of the cost of delaying a required execution beats a zero forecast: in all
+ninety return and waiting-cost cells (three landmarks, three targets, two cohorts, five models)
+the out-of-sample $R^2$ against zero is negative. Relative mean-squared-error differences between
+such forecasts carry no predictive content. Second, its flow targets were raw packet counts, so
+the two most active held-out instruments supply about 94\% of the held-out baseline error; its
+flow comparison tests how tree models extrapolate to them rather than whether burst structure is
+informative. Future signed flow itself is predictable from trailing flow and book state
+($R^2$ against zero between 1\% and 15\% in every flow cell). Refitting on per-instrument
+scale-free targets, adding burst characteristics improves 12 of 32 cells, with two significant
+improvements and five significant deteriorations: no consistent increment.
+
+A post-hoc mechanism check explains why predictable flow does not become predictable returns.
+For each instrument with enough landmarks, a 2023 regression of future same-side packet flow on
+trailing signed imbalance predicts 2024 flow out of sample (median $R^2$ about 7--9\% at five
+minutes). Regressing the 2024 signed return on the predicted flow and on the surprise gives a
+median of 0.004--0.13 basis points per predicted packet against 0.26--0.53 per surprise packet,
+with the surprise coefficient significant in 18--21 of about 21 instruments and the predicted
+coefficient in 4--6. Liquidity providers see the same tape, so anticipated continuation is
+already in the quotes, as in the asymmetric-liquidity account of efficient markets with
+persistent order flow \citep{bouchaud2004,lillo2004,farmer2013}. Sorting 2024 bursts by a
+2023-fitted return forecast gives no monotone ordering, and 39 of 40 decile cells lose money
+after paying the half-spread. Detecting an ongoing execution programme from the public tape
+therefore does not by itself predict returns.
+
+Controlled simulations separate two ways a burst detector fails a parent order: false merging of
+unrelated same-side trades, and fragmentation of one parent across pauses, missing venues and
+ambiguous signs. A code audit found that the legacy join training pooled simulated days on an
+intraday clock with parent identifiers that restart each day; that failure cannot be used to
+argue that reconstruction is exhausted. The corrected join model is not evidence in the other
+direction either: on its own test pairs a rule that joins fragments less than thirty seconds
+apart performs as well, because the simulator places few parents in a day and generates its
+order book independently of them.
+
+The message data do not identify aggressors. The seventh column of the LOBSTER message file is
+NASDAQ market-participant attribution, which earlier extractors ignored; on the probed
+instrument-days it appears almost exclusively on non-marketable market-maker quotes. Hidden
+executions carry no order identifier, and same-timestamp links from a trader's resting order to
+an aggressive execution occur at 0.2--0.3\% of execution timestamps. Validation of burst
+definitions on real data therefore needs a signature of common origin with a measurable chance
+rate (Section~\ref{sec:fingerprint2026}).
+
+\section{Validating burst definitions against a same-origin fingerprint, September 2026}
+\label{sec:fingerprint2026}
+
+Without aggressor identities, a burst definition can still be tested against evidence of common
+origin whose chance rate is measurable. When an execution algorithm slices a parent order into
+identical child sizes, same-side aggressive packets with the same size recur at short lags more
+often than chance. Only \emph{untruncated} packets are used: packets that neither exhausted
+displayed touch depth nor walked the book, whose size is the incoming order's size. Round lots
+are analysed separately. The chance rate is the same statistic computed across a pair of
+adjacent trading days at the same clock lag. Both packets must lie in the same quartile of
+executed-side displayed depth, because depth censors untruncated sizes: on a synthetic tape with
+depth regimes and no programmes, an unmatched null reports a spurious excess above~1.5.
+Statistics weight instruments equally. The design, gates and every amendment were fixed before
+the corresponding outputs were read. Exploration used 2024 (174 instruments); confirmation used
+2021 (291 disjoint instruments), read once.
+
+\paragraph{The fingerprint.} Identical-size recurrences exceed the depth-matched chance rate
+(Figure~\ref{fig:fingerprint}), in 97--99\% of instruments in both years. Round lots show no
+excess (1.00--1.05), and excluding packets with hidden fills leaves the ratios unchanged. The
+excess decays over about two minutes to a plateau near 1.2--1.3 at half an hour.
+\begin{center}
+\begin{tabular}{lcc}
+\hline
+median observed/chance & 2024 & 2021 \\
+\hline
+0.5--2 s & 2.16 [2.01, 2.41] & 2.55 [2.33, 2.74] \\
+2--10 s & 2.05 [1.81, 2.29] & 2.04 [1.95, 2.18] \\
+\hline
+\end{tabular}
+\end{center}
+Recurrence lags spike at whole seconds (1, 10 and 60 seconds; 1.2--2.0 times neighbouring lags)
+but not at half-seconds, consistent with clock-scheduled algorithms.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.49\textwidth]{figures/fig_fingerprint_curve_2021.pdf}\hfill
+\includegraphics[width=0.43\textwidth]{figures/fig_fingerprint_roc_2021.pdf}
+\caption{Left: identical-size same-side recurrences relative to chance, by lag, 2021
+confirmation sample (median across instruments; bands are bootstrap 95\% intervals).
+Right: burst definitions as ROC curves: the share of excess identical-size pairs kept inside
+one burst against the share of all same-side pairs grouped, as the gap grows from 0.1 to 300
+seconds.}
+\label{fig:fingerprint}
+\end{figure}
+
+\paragraph{Which definition keeps same-origin pairs together.} Definitions are scored by Youden's
+$J$ over lags below 300 seconds: the share of excess identical-size pairs inside a burst minus
+the share of all same-side pairs inside a burst, averaged over instruments. Two families tie:
+\begin{itemize}
+\item uninterrupted same-side runs, ended by any opposite-side or unsigned execution, with a time
+  cap between 30 and 300 seconds ($J=0.36$ in 2024, $0.26$ in 2021);
+\item side-only streams with a 2--5 second gap ($0.34$--$0.35$ and $0.26$).
+\end{itemize}
+They keep 40--57\% of same-origin evidence inside a burst while grouping 13--22\% of same-side
+pairs; a 60-second side-only stream groups 86\% of pairs and scores $J\approx0.05$. The
+pre-declared winner (run, 300 seconds) ranked seventh in 2021, within 0.006 of the leader, so its
+rank gate failed. The ordering of all 33 definitions replicated (Spearman 0.95).
+
+\paragraph{Programme-likeness is visible in burst timing.} For every run burst, identical-size
+repeats among same-side, same-depth-quartile pairs were compared with depth-specific chance. A
+score using no child sizes was fitted on 2024 bursts and applied once to 2021. It ranks bursts
+from 51 to 241 excess repeats per thousand pairs, bottom to top decile (difference 189,
+95\% interval 150--232). Timing geometry alone (packet count, duration, pacing) retains a
+difference of 132; time of day and activity alone give none.
+
+\paragraph{Book state.} Holding lag fixed, identical-size recurrences occur at more similar
+spreads than size-similar recurrences (ratio 0.90--0.95) but at \emph{less} similar displayed
+depth (1.05--1.14), in both years. A first version of this comparison used a control whose lag
+jittered around the matched lag and was biased towards similarity; it is excluded. Programmes
+act under similar spreads while depleting the depth they trade against. The simple hypothesis
+that they wait for the same book state was not confirmed.
+
+These results rank definitions and bursts relative to an observable lower bound on common origin.
+They do not identify the absolute share of unrelated flow inside a burst. They do not separate
+retail from institutional orders: most retail marketable flow is internalised off-exchange, and
+identifying it requires trade-reporting data \citep{boehmer2021}.
+
+\section{Are fingerprint bursts execution programmes? September 2026}
+\label{sec:programevidence2026}
+
+Section~\ref{sec:fingerprint2026} established that identical child sizes recur beyond chance.
+Identical sizes identify \emph{algorithms}. A market maker's quoting loop can repeat a size as
+well as an institution's execution schedule can. This section tests, with pre-registered gates and
+the same exploration (2024, 174 instruments) and confirmation (2021, 291 instruments) samples,
+whether the detected structure behaves like directional execution, and what it shows about the
+market. External tests with WRDS data and the daily imbalance of programme flow follow in the
+next subsection once complete.
+
+\paragraph{An independent timing fingerprint.} A timer-driven algorithm fires its children at
+whole-second multiples, so their lags sit near integers whatever their sizes. Same-side lags lock
+within $\pm10$ ms of whole seconds more on the same day than across adjacent days (ratio 1.27,
+95\% interval 1.22--1.31, in 2024; 1.14, 1.12--1.16, in 2021). The excess sharpens as the window
+narrows to 1 ms (Figure~\ref{fig:programevidence}).
+
+The key agreement test compares identical-size pairs with different-size pairs at the same lags.
+The size fingerprint says identical-size pairs are enriched for common origin, and they are also
+more phase-locked: 1.62 (1.52--1.71) and 1.19 (1.15--1.23). Unrelated traders sharing a
+whole-second clock cannot produce this, as a synthetic check confirms. Two signatures built from
+unrelated information pick out the same pairs.
+
+They do not pick the same burst definition. Timing evidence favours dense 2--10 second streams,
+while size evidence favours uninterrupted runs. The pre-declared rank-agreement gate (Spearman
+above 0.7 in both years) failed at 0.60 in 2024, though it reached 0.76 in 2021.
+
+\paragraph{Same-size flow is directional.} An execution programme working a parent keeps trading
+one side; a two-sided algorithm reusing a clip trades both. Identical-size matches exceed chance
+far more on the same side than on the opposite side, at every lag from 2 seconds to an hour, in
+both years (Figure~\ref{fig:programevidence}). The same-side excess persists for hours: 1.11--1.15
+at 10--60 minutes in 2024 and 1.31--1.37 in 2021. That is the lifetime of a working parent, not of a
+seconds-long loop.
+
+The two years differ. In 2024 opposite-side matches sit at chance. In 2021 they exceed it by
+1.3--1.4 at seconds, decaying to 1.1 over hours. Dollar-sized orders from unrelated traders could
+cause this, since share counts coincide when prices are close. A post-hoc test matching prices
+within 10 bps rules that out: the 2021 opposite-side excess stays at 1.23--1.37. The rule for
+reading it was written before the test ran. In 2021 a large population of algorithms reused fixed
+clips on both sides.
+
+Adjacent days do not share same-side sizes reliably more than days a month apart (1.014 in 2024,
+not replicated), so multi-day campaigns with a fixed child size are not detectable.
+
+\paragraph{The passive side.} Non-round limit-order sizes repeat on the same side at 0.5--10
+seconds far beyond chance (1.75 in 2024, 2.43 in 2021). An aggressive child shares its exact size
+with a same-side passive order within ten seconds only modestly more often than chance (1.10 and
+1.13), against 1.05 and 1.08 for the opposite side. Some programmes mix passive and aggressive
+clips of one size, but size matching cannot recover the passive side of a parent.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.49\textwidth]{figures/fig_program_timing.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{figures/fig_program_sides.pdf}\\[4pt]
+\includegraphics[width=0.49\textwidth]{figures/fig_program_markouts.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{figures/fig_program_sync.pdf}
+\caption{Programme evidence, 2024 (solid) and 2021 (dashed). Top left: whole-second phase locking
+of same-side lags, same day versus adjacent days, and identical versus different sizes. Top
+right: identical-size matches relative to depth-matched adjacent-day chance, same side versus
+opposite side. Bottom left: liquidity-provider markouts on touch fills by the programme score of
+the enclosing burst. Bottom right: coincidences of untruncated packets across instruments relative
+to a shifted-time baseline.}
+\label{fig:programevidence}
+\end{figure}
+
+\paragraph{Who pays for programme flow.} Fills at the touch give an exact liquidity-provider
+markout. Against fills inside programme-like bursts (top quintile of the size-free score), providers
+earn $+2.5$ bps (2024) and $+2.3$ bps (2021) more at 60 seconds than against fills inside
+bottom-quintile bursts ($t=31.7$ and $25.7$). In levels, providers make about $+0.6$ to $+0.7$ bps
+against programme-like bursts and lose about $1.7$ bps against the rest of the bursts.
+
+The score leans on low truncation, and bottom bursts sweep the touch, so part of the gap is
+mechanical. Within equal truncation-share strata, a post-hoc comparison leaves $+0.8$ bps in both
+years ($t=5.2$ and $7.8$). This matches Section~\ref{sec:burstinformation2026}: predictable flow is cheap to
+absorb, and prices respond to surprises.
+
+\paragraph{Basket execution.} Untruncated aggressive packets in different instruments arrive within
+a millisecond of each other 19 (2024) to 28 (2021) times more often than at shifted times, mostly
+on the same side. Packets in programme-like bursts synchronize more than other packets (difference
+16.1, interval 10.7--22.4, and 7.6, 4.3--12.1). This is the footprint of basket and
+index-arbitrage execution. The synchrony of a pair rises with a shared two-digit industry. It also
+rises with overlapping ETF membership, but that pre-declared test missed its $t>3$ hurdle
+($t=2.8$ and $2.3$).
+
+\paragraph{What did not survive.}
+\begin{itemize}
+\item \emph{Dollar-sized children.} The test has too few informative pairs: only about 100--200
+  pairs per side have an expected share change of half a share.
+\item \emph{Metaorder physics of fingerprint-linked campaigns.} Linked chains of four or five
+  identical children show no square-root impact, and their post-completion reversion is too
+  noisy to measure. Other-size same-side flow continues after a chain ends, so a chain is a
+  fragment of its parent. Campaigns start after a 2--4 bp move in their own direction.
+\end{itemize}
+
+\paragraph{What programme flow is: full-year panels and external data.} Daily programme and
+other signed flow were computed for point-in-time CRSP universes (top 500 by dollar volume at the
+end of the prior year), intersected with archive coverage: 163 instruments in 2024 (exploration)
+and 223 in 2021 (confirmation). Archive coverage is itself tilted towards instruments that
+performed well, which matters for any return test on it. The pre-declared tests reject the idea
+that programme-like bursts proxy for fundamental institutional parents:
+\begin{itemize}
+\item \emph{Persistence.} Programme imbalance persists \emph{less} from day to day than other
+  flow (slopes 0.21 against 0.33 in 2024 and 0.18 against 0.25 in 2021; differences $t=-8.7$ and
+  $-7.1$).
+\item \emph{Returns.} Daily programme buy-minus-sell imbalance predicts no next-day, open-to-close
+  or next-week return in either year ($|t|\le1.5$). The original daily idea is null on a clean
+  design.
+\item \emph{Mutual funds.} Quarterly changes in mutual-fund holdings track non-programme flow
+  ($t=3.4$ and $2.4$), not programme flow. Flow-induced trading gives no replicated association.
+\item \emph{Index changes.} Before S\&P~500 and Nasdaq-100 additions, non-programme flow buys
+  while programme flow leans to selling (additions minus deletions, programme minus other,
+  $t=-2.9$; 68 events).
+\item \emph{Retail and blocks.} Programme flow is slightly more aligned with retail (sub-penny)
+  imbalance and less with trades of \$50{,}000 or more than other flow, in both years.
+\item \emph{ETF baskets.} The one replicated positive association: programme flow tilts towards
+  same-day ETF creation and redemption demand ($t=7.3$ and $5.5$).
+\end{itemize}
+Together with the millisecond cross-instrument synchrony and the two-sided clips of 2021, this
+profile is intermediation and arbitrage: ETF and basket arbitrage, hedging of internalised retail
+flow, and liquidity-taking market making.
+
+\paragraph{Change over time and an instrument for the spread.} On 130 instruments present from
+2016 to 2024 (Figure~\ref{fig:programtrend}), identical-size repeats at 0.5--2 seconds fell from
+5.6 times chance in 2016 to 2.6 times in 2024, while run-burst quality (Youden's $J$ 0.27--0.37) did
+not trend. Programmes have become harder to see through their sizes.
+
+The 2016--2018 Tick Size Pilot provides the causal test of the spread-scaling law that
+Section~\ref{sec:burstinformation2026} lacked (144 pilot and 125 control instruments present in the
+archive). Wider ticks raised pilot half-spreads by 9.4~bps (95\% interval 6.6--12.5) relative to
+controls, but the three-minute markout of run bursts did not rise ($-0.8$~bps, $-3.2$ to $+1.4$).
+The instrumented slope of markout on half-spread is $-0.13$ ($-1.09$ to $0.29$), which excludes the
+cross-sectional 0.71. This exploratory result favours a common-factor or price-grid account of the
+law over compensation for informed flow.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.55\textwidth]{figures/fig_program_trend.pdf}
+\caption{Identical-size same-side repeats relative to depth-matched adjacent-day chance, median
+over 130 instruments present in 2016, 2019, 2021 and 2024 (bands are bootstrap 95\% intervals).}
+\label{fig:programtrend}
+\end{figure}
+
+\section{Child clusters, parent linkage and passive orders, September 2026}
+\label{sec:metaorder2026}
+
+The last step asks two practical questions. Can bursts be organised into two layers, child
+clusters and parent programmes? And does any of it support a trading use? All tests were
+pre-registered; exploration used 2024 and confirmation 2021, with 2019 reserved for the definition
+gate.
+
+\paragraph{Child clusters.} Uninterrupted 60-second runs and side-only 5-second streams were
+compared on the average of the size-fingerprint and timer-fingerprint $J$. In 2019, the gate year,
+streams lead by 0.028 ($-0.007$ to $0.061$), a tie. On size evidence alone the two rules differ by
+less than 0.02 in every year from 2013 to 2024. The child-cluster boundary is settled up to this
+equivalence, and the run rule is kept.
+
+\paragraph{Parents.} Each burst was scored for identical-size links to later same-side bursts
+within 30 minutes, against depth-matched chance, using size-free burst features and backward
+context. Fit on 2024 and scored once on 2021, the score ranks bursts from $-0.9$ to $+61.8$ excess
+links per thousand pairs. But opposite-side links rise almost as steeply (to 55.5), so the
+directional gate failed: the score identifies membership in persistent algorithms, not in
+directional metaorders.
+
+A real-time version using only a burst's first three children keeps most of the whole-burst
+score's out-of-sample ranking (169 against 190 excess repeats per thousand pairs, top minus bottom
+decile).
+
+Synthetic parents injected into real 2024 tapes calibrate detection. Children spaced by 5 seconds
+land in run bursts 76\% of the time with 70\% purity; children spaced by 60 seconds are mostly
+missed (36\%, 26\%). Size linkage recovers about half of the later bursts of fixed-clip parents
+and a third of randomised-clip parents.
+
+\paragraph{A passive-order test.} A queue-aware simulator posted a 100-share order at the back of
+the displayed queue whenever a burst reached its third child. It followed LOBSTER order
+identifiers through cancellations and executions, cancelling after 60 seconds or when a better
+price appeared. Postings against programme-like bursts are filled most often (50--51\% against
+26--27\% at random times), because the programme keeps consuming the level. Every posting type
+loses money per fill ($-1.5$ to $-2.1$~bps at 60 seconds; Figure~\ref{fig:passive}).
+Programme-triggered postings lose the most per posting in both years ($-0.87$ and $-1.03$~bps
+against $-0.53$ and $-0.45$ at random times), with or without a maker rebate.
+
+The earlier finding that resting liquidity earns more against programme-like bursts describes the
+average resting order, which sits near the front of the queue. A new order joining the back is
+filled when the level is being cleared, and is adversely selected.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/fig_program_passive.pdf}
+\caption{Simulated 100-share passive postings at the touch by trigger, 2024 exploration and 2021
+confirmation: provider-signed markout per fill and profit per posting (unfilled postings count as
+zero), 60 seconds after the fill.}
+\label{fig:passive}
+\end{figure}
+
+The detection chain is now well defined and validated: child clusters, a real-time programme score
+and a persistent-algorithm linkage score. What it finds is mostly intermediary flow, and neither
+the daily imbalance nor passive liquidity provision against it pays.
+
+\section{Informed bursts without leakage: a pre-registered re-test, September 2026}
+\label{sec:p4revisit2026}
+
+The project began with a proposal that persistent-impact bursts are the visible part of informed
+parent orders, and that the flow they reveal predicts returns. Earlier versions of that test
+reported encouraging numbers. This section re-runs the design with the leaks closed, on
+1.27~million name-days between 2012 and 2025, under a pre-registration fixed before any outcome was
+computed.
+
+\paragraph{What the old pipeline was doing.} The legacy detector signed every hidden execution as a
+sell. In this archive the direction field of a hidden print is always $+1$, and hidden prints are a
+quarter of executed volume, so 97.6\% of name-days came out net short against 49--53\% when signed
+natively. That explains the short tilt of the original results but not their headline: the
+informativeness gate itself was circular, keeping bursts whose price had already moved over the
+next one to ten minutes and then measuring a three-minute markout, which lifts $+1.09$ to
+$+11.88$~bps regardless of how prints are signed.
+
+\paragraph{The firewall.} A burst may inform a signal only after
+$T_{\mathrm{dec}}=\max(t_b+600\,\mathrm{s},\,t_e+10\,\mathrm{s})$, and only if $T_{\mathrm{dec}}$
+precedes the signal clock. Informativeness is measured over the ten minutes \emph{from initiation};
+what is tested is the displacement afterwards. Names are split by hash into disjoint groups, the
+periods are disjoint, and validation (2020--21), confirmation (2022--25) and the second era
+(2012--16) were each read once, in that order, with the order enforced in code.
+
+\paragraph{Persistence does not survive.} Bursts selected for holding their impact through the
+first ten minutes give it back afterwards. Against a same-day random-window placebo built with the
+same filter, informative trade bursts are $-0.60$~bps (t~$-7.80$) in 2012--16, $-0.74$ (t~$-2.19$)
+in 2020--21 and $-0.19$ (t~$-1.52$) in 2022--25. Against the bursts the filter rejected the gap is
+$-2.0$ to $-3.4$~bps, and the deciles of how much impact held are monotone in the wrong direction.
+The premise of the original design is refuted in every period, most sharply in the earliest one.
+
+\paragraph{Part of what the filter selects is institutional.} As pre-registered, flow from
+persistent-impact trade bursts co-moves with quarterly institutional ownership changes from 13F
+filings and with mutual-fund holdings changes in all three periods, with quarter fixed effects and
+standard errors clustered by name, while other large burst flow co-moves the opposite way. That
+pattern is also what a pure return channel would produce. A burst is labelled informative because
+the price moved its way, so its quarterly flow tracks the stock's own return (rank correlation
+$+0.15$ to $+0.21$), and institutional ownership changes co-move with contemporaneous returns
+\citep{sias2006}. Adding the same-quarter return as a control, which was not pre-registered,
+removes part of the association. What survives is the 13F association for trade bursts in all three
+periods ($+0.071$, $+0.039$, $+0.034$; t~$3.30$, $2.45$, $2.80$) and the mutual-fund association in
+two of three ($+0.025$ and $+0.041$, t~$4.44$ and $5.21$; not in 2020--21). The submission-burst
+family's associations do not survive in the confirmation period, nor does any flow-induced-trading
+result \citep{lou2012}. The comparison with the retail identification of \citet{boehmer2021} is
+exposed to the same channel and is not used. Index additions and deletions are uninformative at the
+available event counts.
+
+This is a narrower separation than the pre-registered test implied, but it is one the tape alone
+could not provide: a contemporaneous, aggregate, quarterly association with slow-moving holdings,
+not a prediction and not a name-day classifier.
+
+\paragraph{Which burst family.} Trade bursts are preferred. Their within-tape directional linkage
+--- informative bursts followed by same-side rather than opposite-side bursts --- keeps its sign in
+all three periods ($+0.0068$, $+0.0035$, $+0.0046$, confidence intervals excluding zero), whereas
+the submission-burst linkage is significantly negative in validation and significantly positive in
+confirmation. Trade bursts are also the family whose institutional association survives the return
+control in the confirmation period.
+
+\paragraph{The give-back is predictable; the return is not.} A ridge model fit on 2017--19 ranks
+bursts by how much of their impact they will return by the close, with daily rank correlations of
+$+0.039$ to $+0.052$ out of sample. That is a statement about impact decay, not about profit. Six
+pre-registered return cells were run in each period under a Holm correction and a $t>3$ hurdle. One
+passed validation --- and it was reversal-signed --- and it failed confirmation ($t=-0.37$ against a
+pre-registered $t>2$). Every decile portfolio loses after realistic costs; the one book that is
+positive before costs has a deflated-Sharpe probability of $0.0015$ net against 311 recorded trials.
+
+\paragraph{Implementation defects found and fixed before the numbers were read.} Three are worth
+recording because each produced a plausible false positive. Exchange early closes leave stub quotes
+that corrupt late-day midpoints, which manufactured a $+60$~bps closing-auction strategy. A
+placebo must be required to start after its real burst ends and to be decidable by the signal
+clock; without both conditions it absorbs the very impact it is meant to control, and reached
+$t=27.7$. And CRSP's cumulative price factor runs backwards relative to the obvious reading, so an
+inverted ratio turns every split into a $-99\%$ overnight gap: fifty-three name-days out of half a
+million were enough to produce a $-334$~bps-per-day portfolio.
+
+\section{Multi-day fingerprints, and two tests of what the informativeness filter selects, September 2026}
+\label{sec:multiday2026}
+
+Three questions were asked of the burst record that had not been asked before. All three reuse the
+1.27~million name-days of per-burst output from Section~\ref{sec:p4revisit2026}; none required new market data.
+
+\paragraph{Does an execution algorithm come back the next day?} Earlier work established that a burst repeats
+one child size more often than chance within itself, and used cross-day size matches as the chance baseline.
+That baseline was never examined. For each name and each gap of $k$ trading days, count the share of burst
+pairs that share their modal untruncated child size, separately for pairs on the same side and on opposite
+sides. Coincidences, round-number conventions and two-sided market-making algorithms are symmetric in side and
+cancel in the difference; only a directional programme that keeps its clip size across days leaves a same-side
+excess, and only if the programme is still running does that excess depend on the gap.
+
+It does. The statistic $D = E(1) - \overline{E}(30,40,50,60)$ is $+0.0203$ (t~6.78) in the 2017--19 exploration
+sample and $+0.0154$ (t~23.04) in the 2022--25 confirmation sample, on disjoint names, with 93\% of names
+positive in both; 2020--21 gives $+0.0182$ (t~6.30) and 2012--16 $+0.0163$ (t~12.14). In the confirmation
+sample the excess declines from t~24.1 at one day to 18.4 at three, 13.2 at ten, 7.0 at twenty and about 4
+beyond a month. The tape therefore carries a multi-day directional footprint, visible without any broker
+record.
+
+What it does not carry is an institutional label. Flow linked to the previous day --- with the link tightened
+until a mirror-image placebo says it is 61\% programme --- does not load on quarterly institutional ownership
+changes more than unlinked flow does (t~1.59 against a pre-registered hurdle of 2), and is indistinguishable
+from that placebo on a daily large-trade imbalance (t~0.36 against 3).
+
+\paragraph{How does impact grow with the size of a programme?} Grouping linked days into episodes --- maximal
+runs on which one (name, side, clip size) key carries at least three one-sided bursts --- gives 342,744
+episodes on 676 names in the confirmation sample, 5.6\% of them lasting two days or more. Signed impact rises
+with participation but flattens: the log-log slope of mean impact on mean participation is $0.35$ with a
+name-bootstrap interval of $[0.12, 0.80]$, which excludes one and contains the square-root value of one half.
+Mean impact is $+16.6$~bps for one-day episodes, $+37.6$ for two and $+72.2$ for three. This is the concave
+shape that metaorder studies recover from proprietary broker records, here from the public tape alone. Two
+cautions apply: an episode is observed only while it continues, so its stopping is endogenous, and the
+smallest episodes carry a negative mean, which is noise rather than impact.
+
+What does \emph{not} survive is the decay afterwards. In the exploration sample, three-day episodes gave back
+$41.5$~bps over the five days after they stopped, measured with tradable timing (t~$-3.07$); the pre-registered
+confirmation cell returns $-2.2$~bps (t~$\approx -0.1$). The reversion was noise.
+
+\paragraph{What does the informativeness filter select?} Two tests, both pre-registered, answer this from
+opposite directions, and both indict the filter.
+
+The first uses the calendar. On quarter-end days a larger share of trading is mechanical: index rebalancing,
+benchmark tracking, window dressing. The timing is exogenous to any one stock's information. Bursts that pass
+the filter give back $1.77$~bps more of their impact on those days in the exploration sample (t~$-2.74$) and
+$1.37$~bps more in confirmation (t~$-2.09$), against normal-day give-backs of $1.46$ and $1.09$~bps --- roughly
+a doubling. Bursts that fail the filter are unaffected in both samples. Quarterly expiry does not replicate.
+
+The second uses a daily external label. The retail identification of \citet{boehmer2021} also reports
+large-trade ($\geq\$50$k) buy and sell volume, an execution-size proxy for institutional activity available
+every day rather than every quarter. Controlling for the same-day return and with day fixed effects, burst flow
+loads positively on it --- but flow that passes the informativeness filter loads about two thirds \emph{less}
+than the large burst flow that fails it, in every sample: the difference is $-1.18$ (t~$-5.0$), $-1.69$
+(t~$-8.1$) and $-1.81$ (t~$-14.1$) across 2017--19, 2020--21 and 2022--25. This is the opposite ordering to the
+quarterly ownership test of Section~\ref{sec:p4revisit2026}, and the two labels differ in kind: one is a change
+in holdings over three months, the other an execution-size imbalance on the day. Because the two regressors are
+complementary subsets of the same flow, the contrast is evidence about ordering rather than magnitude. Burst
+flow is unrelated to retail activity throughout.
+
+Taken with the give-back result of Section~\ref{sec:p4revisit2026}, the picture is consistent: bursts whose
+impact holds for ten minutes are not the informed subset. They are, disproportionately, the flow that pushes
+price and then gives it back, and it is the bursts the filter discards that sit closer to institutional-size
+execution.
+
 \bibliography{references}
 
 \end{document}

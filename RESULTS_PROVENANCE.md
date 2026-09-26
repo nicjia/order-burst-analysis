@@ -39,11 +39,11 @@ lags on the daily-mean series. Name-days with |markout| > 1,000 bps at any horiz
 | `tab:signing`, `tab:signing_quartile`, `tab:decomp`, `tab:regime_ts` | `hidden_emo_clnv.py` | `06f772ce2375` | 14132159 | `hidden_emo474` | 193,605 |
 | `tab:signrobust` | `hidden_signrobust.py` | `3ec2adff95d3` | 14137566 | `hidden_sr474` | 237,446 |
 | `tab:spread`, `tab:scaling` | `hidden_spread_decomp.py` | `f9afd8df2921` | 14154335 | `hidden_hs474` | 237,948 |
-| `tab:ofi` | `hidden_vs_ofi.py` | `7f30e54b1a00` | 14155326 | `hidden_ofi474` | 237,948 |
+| `tab:ofi` | `hidden_vs_ofi.py` | `6498a1505679` ‡ | 14155326 | `hidden_ofi474` | 237,948 |
 | `tab:depletion` | `hidden_depletion.py` | `9ea85265ea33` | 14171486 † | `hid_depl` | 235,940 |
 | `tab:hasbrouck` | `hidden_hasbrouck2.py` | `3a05b5928dd9` | 14171487 † | `hid_hb2` | 237,446 |
 | `tab:preprint` | `hidden_preprint.py` | `7568fa1701df` | 14182564 † | `hid_pre` | 234,936 |
-| `tab:tickplacebo`, `tab:decomposition` | `hidden_tickplacebo.py` | `c8f84be8a426` | 14227671 | `hid_tp` | 235,940 |
+| `tab:tickplacebo`, `tab:decomposition` | `hidden_tickplacebo.py` | `7f30e54b1a00` ‡ | 14227671 | `hid_tp` | 235,940 |
 | `tab:hidden_term`, `tab:vargrid` | `hidden_final.py` | `347f17310a69` | 14242281 | `hid_fin` | 235,940 |
 | `tab:sweep` | `hidden_sweep2.py` | `4e207c3563ae` | 14244524 | `hid_sw2` | 235,940 |
 | `tab:consvwdraw`, `tab:hsrange`, `tab:depxsweep`, VAR-frequency bridge | `hidden_sweep3.py` | `108448471bbd` | 14292066 | `hid_sw3` | 235,940 |
@@ -80,8 +80,8 @@ ac0948aa0bff burst_alt.py            9ea85265ea33 hidden_depletion.py
 c8f84be8a426 hidden_freeform.py      3a05b5928dd9 hidden_hasbrouck2.py
 7568fa1701df hidden_preprint.py      3ec2adff95d3 hidden_signrobust.py
 f9afd8df2921 hidden_spread_decomp.py 4e207c3563ae hidden_sweep2.py
-108448471bbd hidden_sweep3.py        c8f84be8a426 hidden_tickplacebo.py
-f9afd8df2921 hidden_vs_ofi.py
+108448471bbd hidden_sweep3.py        7f30e54b1a00 hidden_tickplacebo.py
+6498a1505679 hidden_vs_ofi.py
 ```
 
 Regenerate with `shasum -a 256 src_py/<f> | cut -c1-12` locally and `sha256sum` on the cluster.
@@ -116,3 +116,209 @@ Stated because a provenance document that hides its own holes is worthless.
 - **Roughly 40% of ticker-days are absent** from the staged archive or fail reconstruction. The
   per-test name-day counts in §2 differ for this reason plus each estimator's own filter; no
   name-day is ever excluded on the basis of its outcome.
+
+
+### Checksum audit, 2026-09-25 (repository cleanup)
+
+Every script pinned in this ledger was re-hashed after the cleanup. All 107 pins resolve to an existing file at the
+recorded path; 96 match. The 11 that do not were all last modified before the cleanup, which edited no code.
+
+- **Transcription error, corrected above (‡).** `hidden_tickplacebo.py` had been given `hidden_freeform.py`'s
+  hash (`c8f84be8a426`), and `hidden_vs_ofi.py` had been given `hidden_tickplacebo.py`'s. Both files are
+  byte-identical to their only git commit (`af1fcb7`, 2026-08-09): `7f30e54b1a00` and `6498a1505679`.
+- **Older pins of files re-pinned later (expected).** `p4_aggregate.py` (`106d9198bd1b`, `9f9ed9be4120`),
+  `p4_analyze.py` (`1fcdfefacfdb`), `p4_external_tests.py` (`88535561ba67`), `evidence_stats.py`
+  (`926e3748db14`) and `fingerprint_stats.py` (`d66421e35454`) each have a later row whose hash the working copy
+  matches. The earlier versions of `evidence_stats.py` survive on Hoffman2 at
+  `results/program_evidence_v1/code/`.
+- **Edited locally after the pinned run.** `aggregate_two_avenue_oos.py` (pinned `dc1d699e3fc6`) and
+  `two_avenue_oos_day.py` (pinned `0e322cd780ff`) were changed on 2026-08-28. The pinned versions are intact on
+  Hoffman2 in `src_py/`; use those to reproduce §1.18–1.19.
+- **Pinned version not found.** `fragment_reconstruction.py` (pinned `40ed09189f52`; local and Hoffman2 copies
+  are `128979c8978a`) and the fingerprint-v1 pin of `fingerprint_stats.py` (`d66421e35454`). Neither survives in
+  the working copy, in git or in the Hoffman2 code copies checked.
+- **Docstring-only edit to the shared reconstruction module.** `burst_alt.py` is pinned as `ac0948aa0bff`. Commit
+  `e603a00` (2026-09-12) rewrote only the `reconstruct()` docstring, so the file now hashes `5a8264d99020`. The code
+  path is unchanged; `git show fe0937c:src_py/burst_alt.py` recovers the pinned bytes.
+- Two paths cited here were already absent before the cleanup: `src_py/agg_sw3.py` and
+  `config/informed_models_2023.json`.
+
+## 6. Two-avenue experiments (not manuscript evidence)
+
+These runs are retained for audit but are not entries in §2 because their claims either fail
+out of sample or have a known design flaw.
+
+| Purpose | Script sha256[:12] | SGE array | Results group | Status |
+|---|---|---|---|---|
+| packet-level Hurst/placebo v2 | `burst_quality_v2.py` `96d621f283dc` | 14575613 | `bq2` | Excluded: favorable definitions used sign-conditioned boundaries. |
+| 2023 training extraction | `fragment_reconstruction.py` `40ed09189f52` | 14575617 | `two_avenue_train` | Completed; input to the frozen experimental models only. |
+| frozen 2023 model | config `5a3da87aeff7` | 14575623 | `config/informed_models_2023.json` | Completed; 2024 results fail the joint calendar/name holdout. |
+| untouched 2024 compact OOS | `two_avenue_oos_day.py` `0e322cd780ff` | 14575625 | `two_avenue_oos` | Completed: 469 usable names, 112,779 name-days, 251 dates. |
+| OOS aggregator | `aggregate_two_avenue_oos.py` `dc1d699e3fc6` | 14575712 | `two_avenue_oos/summary.json` (`8e908eb2f355`) | Completed after empty-file repair; official price-discovery/trading null. |
+| sign-blind Hurst engineering pilot | `burst_quality_v3.py` `4acff661d613` | 14584374 | `bq3_pilot2` | 12 deterministic names × 20 dates; coverage/runtime pilot, not inference. |
+| sign-blind Hurst ground truth | `validate_bq3_simulation.py` `d958b91ab268` | local | `results/simulation/bq3_ground_truth_30d.json` (`903e6ac4a368`) | 30 days × 6 scenarios; rejects dH as a monotone parent-recovery ranking. |
+| strict continuation training | `strict_continuation_extract.py` `5a21ff82dcca` | 14587812; repairs 14592987, 14592988 | `strict_cont_train` | Initial array: 472 outputs; QQQ/SPY exceeded 8 GB (exit 137). Isolated 16 GB repairs precede final freeze. |
+| strict continuation freeze | `fit_strict_continuation.py` `7704dba818ff` | preliminary 14587816; final 14592989 | `config/strict_continuation_2023.json` | Final checksum `fb55d37584cd`; 382 non-holdout names and 2,252,761 fragments. Preliminary checksum `87d613cab675` excluded. |
+| untouched-2025 one-day gate | `strict_continuation_oos_day.py` `fc2d6c3285d3` | preliminary 14587817; repeated 14592990 | `strict_cont_oos/pilot` | Repeated schema/finiteness gate passed on final freeze; outcome values not inspected. |
+| untouched-2025 full test | `strict_continuation_oos_day.py` `fc2d6c3285d3` | 14593499; repairs 14597703--14597707; final aggregate 14597708 | `results/strict_cont_oos/summary.json` (`7c78215db52f`) | Initial 468-name aggregate excluded after five exit-137 tasks. All exact-name repairs and final aggregate exited cleanly. Final: 473 usable names, 111,521 name-days, 249 dates; frozen continuation gate passes. |
+| independent continuation audit | `audit_strict_continuation.py` `31d9705598f7` | local/Hoffman | `results/strict_cont_oos/independent_audit.json` (`d29a64098da8`) | Coverage 474/474 with CL empty; conditional finiteness, schema, year, uniqueness, and NW(10) checks pass. Common statistics agree with production to `3.6e-15`. |
+| liquidity-pause-v1 mechanism gate | common `02ac5b269203`, extractor `a620844e8263`, fit `2684a9fb4f11`, OOS `9b68f541d4c1`, aggregator `31753ffca72a` | pilot 14598595; train 14598875; freeze 14598876 | `config/liquidity_pause_2023.json` (`6f8380019b26`) | Pilot passed; 474/474 training tasks and freeze exited cleanly. Fit: 30,674,288 risk rows, 8,384,936 events, 382 names. Both required coefficient signs fail in single and joint models; per frozen design no 2025 output was submitted. |
+| hidden-packet identification bounds | extractor `2e5ce6290a5a`, aggregator `e80cd7210189`, validator `8f0e87a5e769` | pilot 14608632; panel 14608644; aggregate 14608645 | `hidden_packet_bounds` | Frozen packet-level replacement for hidden §§1.1–1.14: type-5 direction ignored, no bursts, t+1s outcomes, conventional estimates plus sharp unsigned-sign bounds, 2023–24 replication/2025 confirmation. Pilot passed 1 row × 69 columns; full 474-name/752-date panel running. |
+| packet-level spread scaling | extractor `7ea529c8902a`, aggregator `72270fd40ce0` | panel 14610561; aggregate 14610562 | `hidden_packet_spread_scaling` | Frozen no-burst recomputation of cross-name markout/half-spread scaling for defensibly signed packets, with outside-only and conventional sensitivity arms; 2023–24 and 2025 separate. Running. |
+| packet-level spread-scaling recomputation | `packet_spread_scaling.py` `ebfeb86f6c76`, aggregator `aggregate_packet_scaling.py` `373d0eec3b88` | 14610572; held aggregate 14610573 | `packet_scaling` | Completed. Rebuilds VERIFIED_RESULTS 1.5 on economic packets: 474 names, 502 dates, 2023-2024 only (zero 2025 dates, holdout untouched). Emits half-spread beside every markout and never pre-bins. AAPL pilot clean. Final: 474 outputs, 228,927 name-days, 500 dates, zero error files, peak 12.5 GB under a 16 GB request. Aggregate summary.json. qacct lists 413 of 474 taskids, an accounting gap not a failure: every task wrote its output and no stderr file is nonempty. Result in VERIFIED_RESULTS 1.21. |
+| packet-scaling 2025 confirmation | extractor `packet_spread_scaling.py` `ebfeb86f6c76` (unchanged from training), gate `config/packet_scaling_gate.json` `b2fea4e099cd` | 14621859; held gate 14621860 | `packet_scaling_2025` | Completed. 473 outputs, 472 names in the regression, 249 dates, 2025 only. All five frozen gates PASS; audit agrees with production to 0.0 (slope) and 2.8e-17 (intercept). Result in VERIFIED_RESULTS 1.21. |
+| independent scaling auditor | `audit_packet_scaling.py` `1349d5e10888` | local/Hoffman | `results/packet_scaling/independent_audit.json` | Shares no code path with `aggregate_packet_scaling.py`: own CSV reader, QR rather than lstsq, own HC1. On the 2023-24 panel it agrees with production to `3.3e-16` (slope), `9.7e-17` (intercept), `2.2e-16` (ratio median). |
+| hidden-packet-bounds and hidden-packet-spread-scaling, relaunched | unchanged scripts | 14621851/14621852 and 14621853/14621854 | `hidden_packet_bounds`, `hidden_packet_spread_scaling` | Supersede 14608644/14608645 and 14610561/14610562, which sat queued 24 hours at `h_rt=36:00:00` and produced zero rows. Deleted with no output lost (verified `out=0 rows=0` before `qdel`); resubmitted unchanged except `h_rt=24:00:00`. The relaunched array began executing within five minutes. Both completed: bounds 474/474 outputs (VERIFIED_RESULTS 1.22), hidden scaling 473 outputs (VERIFIED_RESULTS 1.23). |
+
+The local next-generation two-avenue code deliberately differs from the pinned OOS hashes:
+it excludes singleton fragments from campaign reversal, orders decisions chronologically,
+and adds pre-fragment 60s/300s signed-flow controls. It must use a new frozen config and a new
+results group; it must never be mixed with array 14575625 outputs.
+
+
+## 2026-09-13: burst-information-v1 and reconstruction diagnostics
+
+Result group: `results/burst_information_v1` locally and under the Hoffman2 project root.
+Design: `studies/burst_information/BURST_INFORMATION_DESIGN.md`, `design.json`; extraction source hashes in
+`manifest.json`, evaluation source hashes in `evaluation_manifest.json` (verified unchanged
+before the single completed fit). The first local evaluation invocation stopped at the input
+receipt gate during transfer; no models were fitted from that incomplete local copy.
+
+- Pilot 14732664: AA 20230103, 37 valid rows.
+- Main 14732764: 36 tasks. Accounting: 33 exit 0; CHTR exit 123 from a download failure;
+  AMD/AMZN tasks 3/4 intentionally cancelled (exit 137), with completed files retained.
+- CHTR repair 14732766: one task, exit 0; original failure receipt preserved.
+- AMD/AMZN tail 14732767: 32 single-date tasks, all failed=0 / exit_status=0. Plan retained
+  in `tail/plan.json`. Verified CSV row counts, ticker/date, and status before merge;
+  interrupted metadata preserved remotely in `interrupted_receipts`.
+- `tail_merge_audit.json`: 1,410 ok + 30 confirmed missing = all 1,440 planned stock-days.
+  Scheduler records: `accounting/14732764.txt`, `14732766.txt`, `14732767.txt`.
+- `evaluate_burst_information.py`: 75 fits, 15 saved prediction panels, 120 paired contrasts,
+  30 timing policies with 90 statistics. Runtime: NumPy/pandas/sklearn in `summary.json`.
+- `audit_burst_information.py`: independent CSV grouping, matrix-form HAC and non-overlap
+  selection; all 120 comparisons / 90 economic statistics pass, maximum error 2.84e-14.
+  `independent_audit.json` stores the audited summary hash.
+- `report_burst_information.py`: descriptive model loss levels and post-result name/leave-one-
+  name tables from saved predictions, plus the full human-readable matrix. No additional fits
+  or inferential tests. `studies/burst_information/BURST_INFORMATION_RESULTS.md` reports the primary negative result,
+  linear-baseline comparison and execution limitations. These are exploratory 2023/2024 data.
+- `burst_recovery_diagnostic.py`: 30 paired simulated days, 9 mechanisms, 3 detectors;
+  `audit_burst_recovery.py` independently enumerates pair sets for all 810 cells, error 1.1e-16.
+- `diagnose_join_sessions.py` and `metaorder_join_v2.py`: paired legacy/session-scoped fits
+  on 30 new simulated days, 18 test days; `audit_join_sessions.py` independently verifies
+  saved day/parent labels and Brier/confusion metrics. This invalidates the old join-failure
+  closure argument but does not affect the separate frozen fragment classifier.
+
+Primary held-out third-packet 300-second flow improvement = -0.155% (t=-4.30). Secondary
+60-second return improvement = +4.009% versus state/regime tree (t=9.25), but MSE is 7.526%
+higher than linear state. One-share third-packet incremental timing saving = 0.096 bps
+(t=0.82) held-out / -0.083 bps (t=-0.56) seen. No fresh confirmation, parent identity,
+causal institutional interpretation, finite-size profitability or first-in-literature claim.
+
+## 2026-09-13: corrections and post-hoc diagnostics of the burst-information work
+
+| Purpose | Script sha256[:12] | Where | Output | Status |
+|---|---|---|---|---|
+| burst-information-v1 post-hoc diagnostics (zero-forecast R², name loss shares, normalized refits, return deciles, surprise pricing) | `diagnose_burst_information_v1.py` `9f4b346fb956` (reads frozen `evaluate_burst_information.py` `a5dbf377f0ae`, `burst_information_extract.py` `0a97af101c13`) | local | `results/burst_information_v1/posthoc/` (`diagnostics.json` + 6 CSVs) | Completed. 0 of 90 return/wait cells beat zero; held-out primary flow MSE 52.5% AMZN + 41.1% AMD; normalized burst contrasts 12/32 improved (2 sig +, 5 sig −); deciles 39/40 net negative; surprise-pricing table in VERIFIED_RESULTS §1.26. Post-hoc, exploratory. No v1 file modified. |
+| missing-period guard for hidden-packet bounds | `aggregate_hidden_packet_bounds.py` `0e7714e5fd20` (guard added; frozen hash `e80cd7210189` superseded) | Hoffman job 14736729 | `results/fingerprint_v1/code_check/bounds_recheck.json` | Re-aggregation of the completed 14621851 panel parses to JSON identical (`identical: True`) to the frozen `summary.json`. The frozen gate checks signs only. |
+| MPID / linkage probes (KEY, CRWD 2024-06-04; KEY, AAPL 2019-06-04, 2021-06-03, 2025-06-04) | scratch probes, login node | Hoffman `results/linkage_probe/` | console output recorded in `studies/fingerprint/BURST_FINGERPRINT_DESIGN.md` | Descriptive only; not a panel. |
+
+## 2026-09-13: fingerprint-v1 — same-origin fingerprint and burst-definition validation
+
+Design and amendments: `studies/fingerprint/BURST_FINGERPRINT_DESIGN.md`; freezes `results/fingerprint_v1/freeze.json`
+(v1) through `freeze_v5.json`. Results: `studies/fingerprint/BURST_FINGERPRINT_RESULTS.md`, `VERIFIED_RESULTS.md` §1.27.
+
+| Purpose | Script sha256[:12] | SGE array | Output | Status |
+|---|---|---|---|---|
+| pilot (3 names, one pair) | `fingerprint_packets.py` `22a0649a72d2`, draft stats | 14736105; 14736112 | `pilot/` | 14736105 hit partial-download dates (0612 missing); 14736112 clean. Draft stats superseded. |
+| exploration packets (2024, 174 names × 20 dates) | `fingerprint.sh` `4c9dd541572c` | 14736606; retries 14736769–14736773 | `explore_2024/packets`, receipts | 3,480 ok. lobster2 SSH refusals (31 receipts) all recovered by the retry driver. Draft stage-2 stats in `stats/` were never aggregated. |
+| confirmation packets (2021, 300 names × 20 dates) | same | 14736779 | `confirm_2021/packets` | 5,702 ok + 298 missing (names absent in 2021). |
+| stage-2 statistics v2 (depth-matched null) | `fingerprint_stats.py` `d66421e35454` (code_v2), `fingerprint_stats_v2.sh` `3a263b62d5ed` | explore 14736940 + 14736941; confirm 14736915 | `*/stats_v2/*.npz` | 174/174 and 300/300 ok, zero nonempty stderr. |
+| corrected E3 (lag-binned state similarity) | `fingerprint_state.py` `a70a5a2433b7`, `fingerprint_state.sh` `070d4ea46057` | explore 14738017; confirm 14738018 | `*/state_v3/*.npz` | Complete. |
+| activity-matched sensitivity (exploration only) | `fingerprint_stats.py` `7631fa12eb2d` with `FP_MATCH_ACTIVITY=1`, `fingerprint_stats_act.sh` `25908b3b5b9e` | 14738033 | `explore_2024/stats_act`, `summary_activity_matched.json` | Aggregated on 173 names; NVDA was still running at aggregation. Flag off reproduces v2 outputs. |
+| burst rows (run, 300 s) | `fingerprint_burst_rows.py` `78ec71013932`, `fingerprint_burst_rows.sh` `6b68696b6658` | explore 14738034; confirm 14738035; USB repair 14738046 | `*/burst_rows_run_300/` | USB task 278 exit 137 after 21 s at 0.46 GB (scheduler kill); the single-task repair succeeded. |
+| burst-row collection | `collect_burst_rows.py` `a804d992fb4c` | 14738042; confirm re-collection 14738047 | `*/burst_rows_run_300_usable.csv.gz` | 837,943 (2024, 174 names) and 1,557,147 (2021, 291 names incl. USB) testable bursts. |
+| aggregation (local) | `aggregate_fingerprint.py` `66d223d21cb2`, `aggregate_fingerprint_state.py` `6dd202124159` | local, BOOT=1000 | `*/summary.json`, `*/state_summary.json` | Exploration aggregated and all selections fixed before any confirmation output was read. |
+| program score (local) | `program_score.py` `1d5c70fde97d` | local | `program_score.json`, `program_score_sensitivity.json` | The first invocation (bootstrap concatenating rows) was stopped before writing any output. The bootstrap was vectorized over per-name decile totals, with identical statistic and fit, and run once. |
+| gates (local) | `evaluate_fingerprint_gates.py` `f8b2da703f74` | local | `results/fingerprint_v1/gates.json` | C1 pass, C2 fail, C3 fail (rank 7; Spearman 0.954), P1 pass, P2 pass. |
+| figures and tables | `report_fingerprint.py` `655e6ffd3e57` | local | `figures/fig_fingerprint_*.pdf`, `results/fingerprint_v1/report/` | PDFs are gitignored; force-add when committing. |
+
+## 2026-09-14: program-evidence-v1 — are fingerprint bursts real execution programs?
+
+Design, predictions and amendments: `studies/program_evidence/PROGRAM_EVIDENCE_DESIGN.md`. Results:
+`studies/program_evidence/PROGRAM_EVIDENCE_RESULTS.md`. Freezes: `results/program_evidence_v1/freeze_v1.json` … `freeze_v3e.json`.
+Cluster root `results/program_evidence_v1/`; aggregated outputs synced to the same path locally
+(gitignored). WRDS extracts under gitignored `data/wrds/` via `wrds_access.py` `40db918f3442`
+(credentials from `.env`, never printed) and `wrds_pull_evidence.py` `702918d21f05`.
+
+| Purpose | Script sha256[:12] | SGE array | Output | Status |
+|---|---|---|---|---|
+| run/60 burst rows (stage 3b input) | `fingerprint_burst_rows.py` `78ec71013932` (code_v2), `fingerprint_burst_rows.sh` | explore 14738121; confirm 14738122; collection 14738171 (`collect_burst_rows_60.sh` `5766f5fd965c`) | `fingerprint_v1/*/burst_rows_run_60_usable.csv.gz` | 836,762 and 1,554,369 bursts; all tasks exit 0. |
+| stage 3b program score (local) | `program_score_run60.py` `f57a78d06365` (imports `program_score.py` `1d5c70fde97d`) | local | `program_score_run60.json`, `program_model_run60.json` | P1b +190 [151, 234], P2b 1.00. q20 threshold added afterwards from the same training rows (no outcome). |
+| modules A, B, I | `evidence_stats.py` `926e3748db14`, `evidence_formulas.py` `c26e1d2b0882`, `evidence_stats.sh` `3b7b025bce73` | explore 14738169; confirm 14738170 | `*/stats/*.npz` | 174/174 and 291 (+9 absent), zero stderr. Aggregated by `aggregate_evidence.py` `23ca6fa588cc` → `abi_explore_2024.json`, `abi_confirm_2021.json`. |
+| modules C, F, G and post-hoc B4 | `evidence_campaigns.py` `f7c893c9b8f6`, `evidence_markouts.py` `ad881188b76f`, `evidence_sync.py` `0d12b3c060ae`, `evidence_price_null.py` `8a02f51d1e56`, `program_bursts.py` `2518dba36b63` | first arrays 14738797–14738799 and 14738801–14738803 (deleted after ~40 C tasks: scheduling stalls; outputs kept, identical code); batch 14738839 (deleted before start); **shards 14738854** | `*/campaigns`, `*/markouts`, `*/sync`, `*/price_null` | Complete for both groups, zero stderr. G stores name-pair counts by program class (amendment `freeze_v2b`, before any G job started). |
+| post-hoc F2 (truncation strata) | `evidence_markouts_trunc.py` `e0a5a44d7dad` | 14738877 | `*/markouts_trunc` | Complete; `aggregate_markouts_trunc.py` `caf61cb83caf` → `f2_*.json`. |
+| stage-2 aggregation (local) | `aggregate_stage2.py` `cb6211201dbd`, `aggregate_price_null.py` `345f24ca7276` | local | `stage2_*.json`, `stage2H_*.json`, `b4_*.json` | 2024 read before 2021 for C, F, G, H. |
+| module H (passive side) | `passive_extract.py` `00510953a4f0`, `passive_stats.py` `cc890c942219`, `passive.sh` `296be9661232` | explore 14738800; confirm 14738804 | `*/passive/adds`, `*/passive/stats` | 174 and 300 tasks, zero failed receipts, zero stderr. |
+| point-in-time universes | `build_pit_universe.py` `87bc73b72f41` (fingerprint-v1 split) | local (CRSP) | `data/evidence/pit_{2021,2024}.csv`, `contig_*/jobs` | First version hashed the full digest; arrays 14738746/14738747 ran under it and were cancelled; see design amendment 6. |
+| contiguous extraction | `contig_packets.sh` `1915aaadc974` (multiplexed SSH, `CG_UNIVERSE`), `fingerprint_packets.py` `22a0649a72d2` | 14738746/14738747 (old split, cancelled; duplicate NVDA/TSLA tasks killed); **14738827** (2024), **14738828** (2021), **14738829** (events; 14738810 deleted) | `contig_*/packets`, `events/packets` | Complete: every job line has an ok/missing receipt; `archive/hoffman2/check_npz.py` found 0 bad files among 1,008 for the duplicated names. |
+| daily flows | `daily_flow.py` `e405d6e09dd6`, `daily_flow_batch.sh` `86a1bab36cac`, `collect_flows.sh` `8d476c69fa52` | first pass 14739064; 14739106 (dflow2) and 14743255 (dflow3, highp) deleted while throttled; **14743294** (dflow4, 6 shards) | `flows_contig_*.csv`, `flows_events.csv` (hashes in `freeze_v4_flows.json`) | 179/179, 319/319, 72/72 names; zero stderr. |
+| D/E analyses (local) | `analyze_daily_flow.py` `b9182a344be1` (dtype fix after a smoke test on random flows, `freeze_v3e`), `analyze_events.py` `47f819e6bec3` | local | `daily_explore_2024.json`, `daily_confirm_2021.json`, `events_2021_2024.json` | 2024 read before 2021; D4 one shot. |
+| module J statistics | `years_stats.sh` `bcc1d07facc9`, `years_stats_bundle.sh` `5f444df79beb`, `tsp_stats.py` `d61c02ffee71`, fingerprint-v1 `code_v2` stats | per-name arrays 14739107–15 and 14743256–64 deleted while throttled; **14743295** (ys_bundle, 12 shards) | `years_*/stats_v2`, `years_*/tape`, `tsp_*/…`, `fingerprint_v1/*/tape` | Complete, zero stderr. `analyze_years.py` `7e8a12fbd7e8` → `years_tsp.json`. |
+
+**2026-09-14 scheduling incident.** Thousands of seconds-long array tasks (per-name modules and
+names absent in older years) put the account on Hoffman2's cron-controlled `shortjoblist` quota
+from about 05:00 to 18:00: 0 slots on every queue. The remaining work was resubmitted as long
+bundled shards on the group's `bertozzi_pod.q` (`-l highp`, with the user's permission).
+| module J extraction | `build_year_jobs.py` `f0f8cb9a14c8`, `contig_packets.sh` | 14738832–14738838 | `years_*/packets`, `tsp_*/packets` | Complete: receipts equal job lines for the corrected universes. |
+
+
+## 2026-09-14: metaorder-v1 — child clusters, linkage, calibration, passive orders
+
+Design and amendments: `studies/metaorder/METAORDER_DESIGN.md`; results: `studies/metaorder/METAORDER_RESULTS.md`; freezes
+`results/metaorder_v1/freeze_v1.json`–`freeze_v4.json`. All cluster work used `bundle_run.sh`
+`061c85f5064b` (long shards; commands read stdin from /dev/null) on `bertozzi_pod.q` with `-l highp`.
+
+| Purpose | Script sha256[:12] | SGE array | Output | Status |
+|---|---|---|---|---|
+| M1 inputs: module A on 2013/2016/2019 | `evidence_stats.py` `5e64a3e06c20` (`--modules A`) | 14745612 | `years_*/stats_A` | 158, 155, 427 names; zero stderr. Size J from 14743295. |
+| M1 gate (local) | `metaorder_m1.py` `92ba5acf22c8` | local | `results/metaorder_v1/m1_{2019,2016,2013}.json` | 2019 read once: tie, run60 kept. |
+| M2/M4 burst rows | `metaorder_rows.py` `e60bd9c44565`, `metaorder_features.py` (row functions as frozen in `freeze_v1`) | 14745613 | `metaorder_v1/*/rows/*.csv.gz` | 174 + 291 names; zero stderr. |
+| fits and 2021 evaluation (local) | `metaorder_fit.py` `1bdd713fe147`, `metaorder_features.py` `12f965276b01` | local | `models/model_{program,link,realtime}_run60.json`; `models_eval/fit_run60_evaluated.json` | The evaluation refit reproduces the frozen coefficients exactly. |
+| M3 injection | `metaorder_inject.py` `d7f32c3ca6a7` | 14747903 | `explore_2024/inject` | 50 names × 10 days; aggregated by `aggregate_inject.py` `b14de7f8451d` → `m3_explore_2024.json`. |
+| M5 passive simulation | `queue_sim.py` `f814378ffc03`, `metaorder_passive.py` `e61ccab3031a`, `m5_task.sh` `920f8565a0dc` | 14747904 (stdin bug: shards ran one command each), **14747916** (fixed, shards 1–13), **14748434** (remaining 343 ticker-days) | `*/passive/TICKER/DATE.csv.gz` | 2024: 400/400 (incl. missing receipts); 2021: see results. Aggregated by `aggregate_passive.py` `72856274259a`. |
+
+## 2026-09-15: p4-revisit-v1 — persistent-impact bursts without leakage
+
+Design and amendments: `studies/p4_revisit/P4_REVISIT_DESIGN.md` (freeze sha256 `3a33beb216b3`, amendments A1–A2 before any
+outcome); prior-work audit: `studies/p4_revisit/PRIOR_WORK_INVENTORY.md`. Extraction runs as long shards (`p4_shard.sh`) on
+`bertozzi_pod.q -l highp` and the general queue; one multiplexed lobster2 connection per shard.
+
+| Purpose | Script sha256[:12] | SGE job | Output | Status |
+|---|---|---|---|---|
+| PIT universe, CRSP v2 daily, job lists (local) | `p4_universe.py` `c857f9fb50de` | local | `data/p4/universe_*.csv`, `crsp_*.csv.gz`; `results/p4_revisit_v1/jobs/{DEV,VAL,TEST,ERA2}.txt` | 248,459 / 323,918 / 644,138 / 1,219,067 requested name-days |
+| extractor + fast paths | `p4_extract.py` `17a659a1c53c`, `p4_packets.py` `7367883ec893`, `p4_bbo.cpp` `be6d0effaa81` | pilot 14752674; verify **14752753** | `results/p4_revisit_v1/verify/` | fast = canonical = Python book on 5 real name-days, 49/49 arrays identical |
+| Q0a legacy replica | `p4_q0_legacy.py` `ad6a83239593` (first run without Q0c) | 14752792; with Q0c 14752986 | `out/Q0*/`; local `results/p4_revisit_v1/q0/` | 680 ok / 120 missing; summary by `p4_q0_report.py` `736cf93c53ca` |
+| stage 1 DEV / VAL / TEST | as above; `p4_shard.sh` `2d66ae377de0` (earlier revisions ran the first 15 minutes) | 14752793–95 (replaced), 14752920–23 (replaced), **14753051–56**, general-queue shards | `out/{DEV,VAL,TEST}/PERMNO/DATE.npz`, `_status/`, `_json/` | running |
+| renamed-ticker retry | `p4_alt_tickers.py` `8dae4f6de888` | after each cell | `_status/shardretry*.txt` | pending |
+| external proxies (local) | `p4_external.py` `6febbbe1ab09` | local | `data/p4/f13/`, `mf_*`, `iid_*`, `index_events.csv`, `cusip_hist.csv.gz`, `ticker_hist_all.csv.gz` | done |
+| renamed-ticker retry DEV/VAL | `p4_alt_tickers.py` `8dae4f6de888` | 14756794, 14756795 | `_status/shardretry*.txt` | 0 recovered (10,220 / 14,106 candidates) |
+| stage 2 aggregation DEV | `p4_aggregate.py` `9f9ed9be4120` → A3 `01a6fca59d97` → **A4 `106d9198bd1b`** | 14756811 (pre-A3), 14756994 (pre-A4), **14757144** | `agg/DEV/` nameday `ed83def482c4`, sample `4063fab80242`, strata `9217e972d6eb` | 137,275 name-days; earlier versions kept as `agg/DEV_preA3`, `agg/DEV_preA4` |
+| Phase II fit (local, DEV) | `p4_phase2.py` `2c0cdca3a723` | local | `phase2/model_{T,S}_{ridge,hgb}.json` (`dd49a2110644`, `06547baffe54`, `28da7c81780d`, `4e403163f871`) | export equals sklearn; frozen in `freeze_before_VAL.json` |
+| stage 2 aggregation VAL | `p4_aggregate.py` `106d9198bd1b` + models | 14757405 (failed: `p4_analyze` not deployed, no output), **14757444** | `agg/VAL/` nameday `3f32af47f02f`, sample `b3dce8245883`, strata `a2afd6600b60` | 192,179 name-days |
+| stage 3 DEV + VAL (local) | `p4_analyze.py` `1fcdfefacfdb`, `p4_external_tests.py` `88535561ba67`, `p4_phase2.py` `2c0cdca3a723` | local | `analysis/{DEV,VAL}_*.json`, `access_log.txt`; `val_written.json` | VAL read once 2026-09-15; results doc sha `2ac23de9b4cf` before TEST |
+| stage 2 aggregation TEST, ERA2 (pre-A5) | `p4_aggregate.py` `106d9198bd1b` | 14758487, 14759217 | `agg/{TEST,ERA2}/` | superseded by the A5 re-run below |
+| stage 3 TEST (pre-A5) | `p4_analyze.py` `88992fb4afe5` | 14759115 (ROOT/protocol path error, no output), 14759147 | `analysis/TEST_*_preA5.json` | first TEST read; its −334 bps/day CLOP book exposed the A5 defect |
+| **A5 re-aggregation, all four cells** | **`p4_aggregate.py` `8969c85a72dd`** (inverted CRSP split factor fixed) | DEV 14759618, VAL 14759619, ERA2 14760412, TEST 14760411 | `agg/{DEV,VAL,TEST,ERA2}/` nameday `5e13b1096927`, `fd1f9cb73510`, `563b2eb7215d`, `5275893a4f48` | 137,275 / 192,179 / 511,727 / 414,802 name-days; Phase II features and `d_close` verified bit-identical to the pre-A5 run, so the DEV model freeze still holds |
+| **A5 re-analysis** | `p4_analyze.py` `88992fb4afe5`, `p4_phase2.py` `2c0cdca3a723` | VAL 14760422, TEST 14760423, ERA2 14760424 (chained with `-hold_jid`), DEV 14761321 | `analysis/{VAL,TEST,ERA2}_{primary,phase1,q3,q5}.json` | read order enforced by `check_protocol`; pre-fix outputs kept as `*_preA5.json` |
+| external tests TEST, ERA2 (local) | `p4_external_tests.py` `cc10e0ce1987` (A6: 13F quarters need median filers ≥ 100) | local | `analysis/{TEST,ERA2}_q2ext.json` | TEST drops 2025Q3 (63 filers); ERA2 drops 2012Q4 and 2013Q1 (8, 17) |
+| coverage TEST, ERA2 (local) | `p4_coverage.py` `9b87103c1dc6` | local | `analysis/coverage_{TEST,ERA2}.json` | 80.2% of 644,138 and 34.4% of 1,219,067 requested name-days |
+
+| post-hoc Q2 return control (local, 2026-09-20) | `p4_q2_return_control.py` (imports `p4_external_tests.py` `cc10e0ce1987` unchanged) | local | `analysis/{VAL,TEST,ERA2}_q2ext_retctrl.json` | not pre-registered; adds the same-quarter return to (b)/(c); base rows reproduce the pre-registered `*_q2ext.json` numbers |
+
+`p4_analyze.py` changed once after the pre-VAL freeze, from `1fcdfefacfdb` to `88992fb4afe5`, to read the
+output directory from `P4_ANALYSIS_DIR` so the cluster could write beside its own inputs. No statistical code
+changed; the cluster and local copies are byte-identical.
+
+Tests: `tests/test_p4_extract.py` (7), `test_p4_aggregate.py` (3), `test_p4_analyze.py` (5),
+`test_p4_external_tests.py` (3).

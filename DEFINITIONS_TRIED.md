@@ -140,6 +140,100 @@ half-spread, intercept zero, 0 of 40 names clearing a round-trip cost.
 Blocked on data: index-rebalance and expiry calendars, ETF baskets, options/variance data,
 consolidated NBBO, multi-venue routing.
 
+## 2026-09-13 addition: incremental burst-information screen
+
+See `studies/burst_information/BURST_INFORMATION_DESIGN.md` and `results/burst_information_v1/design.json`.
+Five fixed forecast configurations (linear state, nonlinear state, state + online regime,
+state/regime + burst, state/regime/burst + simulation score), three prospective landmarks,
+five flow/price/execution targets: **75 fits**, **120 paired comparisons** across two cohorts.
+Three fixed reconstruction definitions across nine controlled mechanisms add **27 diagnostic
+cells**. These are exploratory comparisons, not independent alpha discoveries. No evaluation
+outcome is used to select parameters. The 66/~110 count above is a historical subtotal and
+does not include this addition or all intervening packet/continuation phases.
+
 Blocked on nothing — genuinely untested: cross-sectional lead–lag across names, cross-impact
 networks, clustering of names by flow structure, forced/uninformed flow windows, passive
 execution simulation, and the SEC Tick Size Pilot as an instrument.
+
+
+The same session added a **paired join-training bug diagnostic**: two fits on 30 new simulated
+training days (legacy pooled-day candidates versus session-scoped candidates), evaluated on
+18 new simulated days with threshold 0.5 fixed. It is a software/design diagnosis, not two
+new real-market strategy searches. Source: `diagnose_join_sessions.py`; independent CSV audit:
+`audit_join_sessions.py`. The old fit's failure cannot close the reconstruction question.
+
+Completed: all 75 fits / 120 comparisons plus 90 execution statistics. Post-result descriptive
+loss levels and leave-one-name-out checks of the secondary third-packet one-minute return
+result add no fitted specifications or inferential tests; they are explicitly exploratory.
+
+## 2026-09-13 addition: fingerprint-v1 validation grid — not an alpha search
+
+`studies/fingerprint/BURST_FINGERPRINT_DESIGN.md`. **66 burst definitions** (3 rules × 11 gaps × minimum 2 or 3
+packets) are *scored* against real-data evidence of common origin (identical untruncated
+same-side child sizes in excess of chance), in 3 size classes under 2 nulls. No price outcome is
+used, and no definition is traded. The single pre-declared selection (Youden J; class
+`u_nonround`, minimum 3, within-day long-lag null) is confirmed once on 2021 with disjoint names.
+These cells add to the definition ledger for completeness; they do not enter a Sharpe or
+deflated-Sharpe hurdle.
+
+Corrections to the addition above: the burst-information matrix's relative-MSE contrasts
+are uninformative (every return/wait model loses to a zero forecast; flow contrasts are
+dominated by the two most active names). Its 75 fits count as tried configurations, but they
+tested nothing about burst information in either direction (`VERIFIED_RESULTS.md` §1.24).
+
+Fingerprint-v1 outcome (2026-09-13): uninterrupted same-side runs (30–300 s cap) and side-only
+2–5 s streams tie on mean per-name Youden J in both years. The pre-declared single winner (run,
+300 s) ranked 7th of 33 in 2021; the rank correlation of all 33 definitions across years was
+0.95. Working definition: run, 60 s cap, ≥ 3 packets. See `studies/fingerprint/BURST_FINGERPRINT_RESULTS.md`.
+
+
+## 2026-09-14 addition: program-evidence-v1 and metaorder-v1
+
+- **Burst rules re-scored, not new definitions.** The 33 fingerprint-v1 definitions (min 3) were
+  scored against a timer fingerprint (module A3). Two candidates, run60 and stream5, were compared
+  on a combined size + phase J in 2013, 2016, 2019 (gate), 2021 and 2024. Result: a tie; run60 kept.
+- **Tried signals (count toward the multiple-testing hurdle):**
+  - daily program imbalance → next-day close-to-close, next-day open-to-close and next-5-day
+    returns, in 2024 and 2021 (6 cells, all null, |t| ≤ 1.5);
+  - passive 100-share postings triggered by program-like, middle and low-score bursts against
+    random times, 4 markout horizons, in 2024 and 2021 (every per-fill markout negative).
+- **Linkage and scoring constructs (not traded):**
+  - rare-size campaigns (C);
+  - forward identical-size link evidence per burst and a positive-unlabeled linkage score (M2);
+  - a first-three-packet real-time program score (M4);
+  - synthetic-parent injection (M3).
+
+## 2026-09-15 addition: p4-revisit-v1 (`studies/p4_revisit/P4_REVISIT_DESIGN.md`, amendments A1–A6)
+
+The original MATH 279 P4 pipeline, run with native signs, point-in-time universes and leakage firewalls.
+Every cell below counts toward the multiple-testing hurdle.
+
+- **Event families (2).**
+  - Trade bursts: run60 on economic packets.
+  - Submission bursts: run rule on non-fleeting, non-replace, non-remainder adds at or inside the touch.
+- **Filter.** P4 eq. 3.3, D_b ≥ κ·PeakImpact.
+  - κ ∈ {0.25, 0.5 primary, 0.75}.
+  - Large: top quintile of |Q_b| over the name's trailing 20 days.
+  - Pseudo-burst placebo at random times (A4 rules).
+- **Q1:** 2 primary statistics (info − pseudo per family) plus secondary contrasts at 3 horizons and 3 κ.
+- **Q2:** (a) linkage; (b) 13F; (c) mutual-fund holdings and flow-induced trading; (d) index events; (e) BJZZ retail. That is 2 families × 6 statistics.
+- **Q3:** 2 models (ridge, boosting) × 2 families × 3 targets.
+- **Q4:** 6 primary cells (2 families × tCLOSE, CLOP, CLCL).
+  - Secondary: placebo signal and κ grid, 3 × 6.
+  - Decile portfolios at 2 cost levels, 2 × 6.
+  - Deflated-Sharpe trial count: 311.
+- **Q5:** 5 split dimensions, descriptive.
+- **Q0 audit (not new signals):** the legacy C++ rule on three trade streams; overnight long-only benchmarks for 4 names; the legacy κ gate at 2 levels.
+
+**Outcome, 2026-09-15** (`VERIFIED_RESULTS.md` §1.31, tables in `studies/p4_revisit/P4_REVISIT_RESULTS.md`). All cells were run in
+three periods (2012–16, 2020–21, 2022–25). Nothing in Q1 or Q4 survived: the Q1 placebo contrast is negative or
+zero everywhere, and of the six Q4 cells exactly one passed validation (submission CLOP, reversal-signed) and
+failed confirmation. Q2(a) separates the families — trade-burst linkage holds its sign in all three periods,
+submission linkage reverses — and Q2(b)/(c) on 13F and mutual-fund holdings replicate in all three for both
+families. Q3 replicates. **Do not re-enter any of these definitions as a fresh signal search:** the 311-trial
+count above is already spent, and a new configuration of the same idea needs a new deflated-Sharpe budget.
+
+*Post hoc, 2026-09-20:* one further specification — the Q2(b)/(c) regressions with the same-quarter return
+added — run on VAL, TEST and ERA2 for both families (18 regressions). It is a robustness control on the
+pre-registered tests, not a signal search; see `studies/p4_revisit/P4_REVISIT_RESULTS.md` "Post hoc: is the institutional
+association a return channel?".
