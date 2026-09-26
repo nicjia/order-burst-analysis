@@ -102,3 +102,20 @@ measurements/tmp/
 .agents/
 .claude/
 .codex/
+
+# LaTeX build products
+*.aux
+*.bbl
+*.blg
+
+# Kept locally (and in the private .git-private history), not published
+/.git-private/
+/.codexrules
+archive/scratch/
+archive/tmp/
+archive/massive_data/
+archive/results_oos2024/
+archive/docs/prompt.md
+archive/docs/CODEX_BRIEF.md
+/LLM_README.md
+archive/MANIFEST_private.md
