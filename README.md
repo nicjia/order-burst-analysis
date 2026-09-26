@@ -20,6 +20,7 @@ information. Every number is in `VERIFIED_RESULTS.md`, with its code and job.
 | `main.tex` | the full internal record (all studies, including failed ones) |
 | `paper.tex`, `Response_to_Referees.md` | the hidden-liquidity submission draft and referee response (see the note below) |
 | `PROJECT_GOALS.md` | the current mandate |
+| `REVIEW.md` | what a code reviewer should check, and how to review the code in parts |
 | `archive/MANIFEST.md` | everything moved out of the way in the 2026-09-25 cleanup, and why |
 
 ## How to verify a result
@@ -56,6 +57,7 @@ definitions and code paths for the hidden-liquidity study. The same checks run o
 | `studies/<study>/` | design and results documents; `studies/burst_forecasting/` also holds its own code and job scripts |
 | `examples/`, `requirements-core.txt`, `REPRODUCING.md`, `RESULTS.md` | the no-data code checks and the hidden-liquidity result definitions |
 | `tests/` | unit tests for packets, bursts, aggregation, inference and the leakage firewalls |
+| `tools/` | `review_parts.py` splits the code into parts small enough for a diff review (`REVIEW.md`) |
 | `config/` | frozen gate and model files cited in the provenance ledger |
 | `measurements/` | panel universes and date lists, and `data/earnings_dates.csv` (§1.12) |
 | `universes/` | legacy ticker universes (`full_500.txt` is survivorship-biased; see §2 of the ledger) |
